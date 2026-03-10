@@ -1,3 +1,7 @@
+## 0.0.3
+
+- Add Swift Package Manager (SPM) support for iOS/macOS
+
 ## 0.0.2
 
 - Add native Zstd compression (no Dart dependency)
