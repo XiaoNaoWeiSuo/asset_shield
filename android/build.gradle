@@ -1,0 +1,34 @@
+group 'com.asset_shield'
+version '0.0.1'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.3.1'
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace "com.asset_shield"
+    compileSdkVersion 34
+
+    defaultConfig {
+        minSdkVersion 21
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}

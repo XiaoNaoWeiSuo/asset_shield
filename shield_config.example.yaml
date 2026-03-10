@@ -1,0 +1,9 @@
+raw_assets_dir: assets/raw_assets
+encrypted_assets_dir: assets/encrypted
+map_output: lib/generated/asset_shield_map.dart
+extensions:
+  - .png
+  - .json
+  - .mp3
+key: "REPLACE_WITH_BASE64_KEY"
+emit_key: false
