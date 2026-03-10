@@ -1,7 +1,9 @@
 name: asset_shield
-description: "A new Flutter plugin project."
+description: "Native asset encryption and compression for Flutter."
 version: 0.0.1
-homepage:
+homepage: https://github.com/XiaoNaoWeiSuo/asset_shield
+repository: https://github.com/XiaoNaoWeiSuo/asset_shield.git
+issue_tracker: https://github.com/XiaoNaoWeiSuo/asset_shield/issues
 
 environment:
   sdk: ^3.0.0
