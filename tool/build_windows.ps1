@@ -36,5 +36,22 @@ if ($cl) {
   exit 0
 }
 
-Write-Error "No suitable compiler found (clang or cl)."
+ $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+ if (Test-Path $vswhere) {
+   $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+   if ($vsPath) {
+     $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+     if (Test-Path $vcvars) {
+       $srcArgs = ($sources | ForEach-Object { '"{0}"' -f $_ }) -join ' '
+       $cmd = "call `"$vcvars`" && cl /nologo /O2 /LD /D ZSTD_DISABLE_ASM=1 /I`"$ZstdDir`" /Fe:`"$OutDir\asset_shield_crypto.dll`" $srcArgs"
+       cmd /c $cmd
+       if ($LASTEXITCODE -eq 0) {
+         Write-Output "Built $OutDir\asset_shield_crypto.dll"
+         exit 0
+       }
+     }
+   }
+ }
+
+Write-Error "No suitable compiler found (clang or cl). Install LLVM or Visual Studio Build Tools."
 exit 1

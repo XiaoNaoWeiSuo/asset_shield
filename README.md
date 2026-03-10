@@ -49,6 +49,43 @@ emit_key: true
 - Web 端如需运行，请将 `compression: none`
 - 压缩依赖原生库，确保已包含各平台预编译库
 
+发布者指南（多机编译）
+--------------------
+
+为了让使用者 `pub get` 即可使用，你需要在发布前编译并提交各平台原生库。
+
+Mac（iOS + macOS）：
+
+```bash
+./tool/build_macos.sh
+./tool/build_ios.sh
+```
+
+Linux：
+
+```bash
+./tool/build_linux.sh
+```
+
+Windows：
+
+```powershell
+.\tool\build_windows.ps1
+```
+
+Android（Mac 或 Linux）：
+
+```bash
+ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/<version> ./tool/build_android.sh
+```
+
+发布前检查产物目录：
+- `android/src/main/jniLibs/**`
+- `ios/Frameworks/AssetShieldCrypto.xcframework`
+- `macos/Frameworks/libasset_shield_crypto.dylib`
+- `linux/lib/libasset_shield_crypto.so`
+- `windows/lib/asset_shield_crypto.dll`
+
 3) 执行加密
 
 ```bash

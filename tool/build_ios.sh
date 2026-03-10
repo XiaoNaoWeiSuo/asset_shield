@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build/ios"
 FRAMEWORK_DIR="${ROOT_DIR}/ios/Frameworks"
 ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
+IOS_MIN_VERSION="${IOS_MIN_VERSION:-12.0}"
 
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}" "${FRAMEWORK_DIR}"
@@ -20,8 +21,10 @@ fi
 
 IOS_DEVICE="${BUILD_DIR}/ios-device"
 IOS_SIM="${BUILD_DIR}/ios-sim"
+IOS_SIM_ARM64="${BUILD_DIR}/ios-sim-arm64"
+IOS_SIM_X86_64="${BUILD_DIR}/ios-sim-x86_64"
 
-mkdir -p "${IOS_DEVICE}" "${IOS_SIM}"
+mkdir -p "${IOS_DEVICE}" "${IOS_SIM}" "${IOS_SIM_ARM64}" "${IOS_SIM_X86_64}"
 
 build_lib() {
   local sdk=$1
@@ -30,6 +33,12 @@ build_lib() {
   local cc
   cc="$(xcrun --sdk "${sdk}" --find clang)"
   rm -f "${out_dir}"/*.o "${out_dir}/libasset_shield_crypto.a"
+  local min_flag=""
+  if [[ "${sdk}" == "iphoneos" ]]; then
+    min_flag="-miphoneos-version-min=${IOS_MIN_VERSION}"
+  else
+    min_flag="-mios-simulator-version-min=${IOS_MIN_VERSION}"
+  fi
   local sources=("${ROOT_DIR}/native/asset_shield_crypto.c")
   while IFS= read -r -d '' src; do
     sources+=("${src}")
@@ -43,6 +52,7 @@ build_lib() {
       -DZSTD_DISABLE_ASM=1 \
       -I "${ZSTD_DIR}" \
       -isysroot "$(xcrun --sdk "${sdk}" --show-sdk-path)" \
+      ${min_flag} \
       -arch "${arch}" \
       -c "${src}" \
       -o "${obj}"
@@ -52,17 +62,17 @@ build_lib() {
 }
 
 build_lib iphoneos arm64 "${IOS_DEVICE}"
-build_lib iphonesimulator arm64 "${IOS_SIM}"
-build_lib iphonesimulator x86_64 "${IOS_SIM}"
+build_lib iphonesimulator arm64 "${IOS_SIM_ARM64}"
+build_lib iphonesimulator x86_64 "${IOS_SIM_X86_64}"
 
-rm -f "${IOS_SIM}/libasset_shield_crypto_universal.a"
 lipo -create \
-  "${IOS_SIM}/libasset_shield_crypto.a" \
-  -output "${IOS_SIM}/libasset_shield_crypto_universal.a"
+  "${IOS_SIM_ARM64}/libasset_shield_crypto.a" \
+  "${IOS_SIM_X86_64}/libasset_shield_crypto.a" \
+  -output "${IOS_SIM}/libasset_shield_crypto.a"
 
 xcodebuild -create-xcframework \
   -library "${IOS_DEVICE}/libasset_shield_crypto.a" -headers "${ROOT_DIR}/native" \
-  -library "${IOS_SIM}/libasset_shield_crypto_universal.a" -headers "${ROOT_DIR}/native" \
+  -library "${IOS_SIM}/libasset_shield_crypto.a" -headers "${ROOT_DIR}/native" \
   -output "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
 
 echo "Built iOS xcframework at ${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"

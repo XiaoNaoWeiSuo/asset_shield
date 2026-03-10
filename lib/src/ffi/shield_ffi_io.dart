@@ -93,8 +93,12 @@ class ShieldFfi {
   static ShieldFfi? _cached;
 
   static ShieldFfi load({String? libraryPath}) {
+    final envPath = Platform.environment['ASSET_SHIELD_NATIVE_LIB'];
     if (libraryPath != null && libraryPath.isNotEmpty) {
       return ShieldFfi._(DynamicLibrary.open(libraryPath));
+    }
+    if (envPath != null && envPath.isNotEmpty && File(envPath).existsSync()) {
+      return ShieldFfi._(DynamicLibrary.open(envPath));
     }
     final cached = _cached;
     if (cached != null) {
@@ -248,34 +252,32 @@ class ShieldFfi {
   }
 
   static String? _resolveBundledLibrary() {
-    final scriptPath = Platform.script.toFilePath();
-    if (scriptPath.isEmpty) {
-      return null;
-    }
-    String? packageRoot;
-    final scriptDir = p.dirname(scriptPath);
-    if (p.basename(scriptDir) == 'bin') {
-      packageRoot = p.dirname(scriptDir);
-    } else {
-      packageRoot = p.dirname(scriptPath);
-    }
-
     final candidates = <String>[];
     if (Platform.isMacOS) {
-      candidates.add(p.join(packageRoot, 'macos', 'Frameworks', 'libasset_shield_crypto.dylib'));
-      candidates.add(p.join(Directory.current.path, 'macos', 'Frameworks', 'libasset_shield_crypto.dylib'));
+      candidates.add('macos/Frameworks/libasset_shield_crypto.dylib');
     } else if (Platform.isLinux) {
-      candidates.add(p.join(packageRoot, 'linux', 'lib', 'libasset_shield_crypto.so'));
-      candidates.add(p.join(Directory.current.path, 'linux', 'lib', 'libasset_shield_crypto.so'));
+      candidates.add('linux/lib/libasset_shield_crypto.so');
     } else if (Platform.isWindows) {
-      candidates.add(p.join(packageRoot, 'windows', 'lib', 'asset_shield_crypto.dll'));
-      candidates.add(p.join(Directory.current.path, 'windows', 'lib', 'asset_shield_crypto.dll'));
+      candidates.add('windows/lib/asset_shield_crypto.dll');
     }
 
-    for (final path in candidates) {
-      if (File(path).existsSync()) {
-        return path;
+    return _findInParents(Directory.current.path, candidates);
+  }
+
+  static String? _findInParents(String start, List<String> relativePaths) {
+    var dir = Directory(start);
+    for (var i = 0; i < 6; i++) {
+      for (final rel in relativePaths) {
+        final candidate = p.join(dir.path, rel);
+        if (File(candidate).existsSync()) {
+          return candidate;
+        }
       }
+      final parent = dir.parent;
+      if (parent.path == dir.path) {
+        break;
+      }
+      dir = parent;
     }
     return null;
   }

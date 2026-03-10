@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/build/macos"
 FRAMEWORK_DIR="${ROOT_DIR}/macos/Frameworks"
 ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 
 mkdir -p "${OUT_DIR}" "${FRAMEWORK_DIR}"
 
@@ -17,6 +18,7 @@ if [[ -n "${ASSET_SHIELD_KEY_BASE64:-}" ]]; then
 fi
 
 clang -std=c99 -O2 -fvisibility=hidden -dynamiclib \
+  -mmacosx-version-min="${MACOSX_DEPLOYMENT_TARGET}" \
   -DZSTD_DISABLE_ASM=1 \
   -I "${ZSTD_DIR}" \
   -o "${OUT_DIR}/libasset_shield_crypto.dylib" \
