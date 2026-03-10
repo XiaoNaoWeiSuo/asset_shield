@@ -8,6 +8,7 @@ ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 
 mkdir -p "${OUT_DIR}" "${FRAMEWORK_DIR}"
+rm -rf "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
 
 if [[ -n "${ASSET_SHIELD_KEY_BASE64:-}" ]]; then
   if ! command -v dart >/dev/null 2>&1; then
@@ -27,4 +28,8 @@ clang -std=c99 -O2 -fvisibility=hidden -dynamiclib \
 
 cp -f "${OUT_DIR}/libasset_shield_crypto.dylib" "${FRAMEWORK_DIR}/libasset_shield_crypto.dylib"
 
-echo "Built ${OUT_DIR}/libasset_shield_crypto.dylib and copied to ${FRAMEWORK_DIR}"
+xcodebuild -create-xcframework \
+  -library "${OUT_DIR}/libasset_shield_crypto.dylib" -headers "${ROOT_DIR}/native" \
+  -output "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
+
+echo "Built ${OUT_DIR}/libasset_shield_crypto.dylib and ${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"

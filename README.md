@@ -117,9 +117,14 @@ dart run asset_shield gen-key --length 32
 
 - Android: `android/src/main/jniLibs/**`
 - iOS: `ios/Frameworks/AssetShieldCrypto.xcframework`
-- macOS: `macos/Frameworks/libasset_shield_crypto.dylib`
+- macOS: `macos/Frameworks/libasset_shield_crypto.dylib` and `macos/Frameworks/AssetShieldCrypto.xcframework`
 - Linux: `linux/lib/libasset_shield_crypto.so`
 - Windows: `windows/lib/asset_shield_crypto.dll`
+
+### Swift Package Manager (SPM)
+
+- iOS: `ios/Package.swift`
+- macOS: `macos/Package.swift`
 
 ### Publisher Workflow (multi‑machine build)
 
