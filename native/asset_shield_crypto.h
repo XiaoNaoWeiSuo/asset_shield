@@ -21,6 +21,20 @@ ASSET_SHIELD_EXPORT int32_t asset_shield_decrypt(
     uint8_t** out_data,
     int32_t* out_length);
 
+ASSET_SHIELD_EXPORT int32_t asset_shield_compress(
+    const uint8_t* data,
+    int32_t length,
+    int32_t level,
+    uint8_t** out_data,
+    int32_t* out_length);
+
+ASSET_SHIELD_EXPORT int32_t asset_shield_decompress(
+    const uint8_t* data,
+    int32_t length,
+    int32_t original_length,
+    uint8_t** out_data,
+    int32_t* out_length);
+
 ASSET_SHIELD_EXPORT int32_t asset_shield_set_key(const uint8_t* key,
                                                  int32_t key_length);
 

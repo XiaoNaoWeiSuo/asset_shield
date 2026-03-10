@@ -1,10 +1,10 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'crypto/shield_crypto.dart';
+import 'crypto/shield_compression.dart';
 import 'ffi/shield_ffi.dart';
 
 class ShieldConfig {
@@ -30,11 +30,14 @@ class Shield {
     required Uint8List key,
     required Map<String, String> assetMap,
     int isolateThresholdBytes = 512 * 1024,
-    bool useNative = true,
+    bool? useNative,
     String? nativeLibraryPath,
   }) {
+    final useNativeValue = useNative ?? !kIsWeb;
     final keyLength = key.lengthInBytes;
-    if (keyLength != 16 && keyLength != 32 && !(useNative && keyLength == 0)) {
+    if (keyLength != 16 &&
+        keyLength != 32 &&
+        !(useNativeValue && keyLength == 0)) {
       throw ArgumentError('Key length must be 16 or 32 bytes for AES-GCM.');
     }
     if (isolateThresholdBytes <= 0) {
@@ -44,7 +47,7 @@ class Shield {
       key: key,
       assetMap: assetMap,
       isolateThresholdBytes: isolateThresholdBytes,
-      useNative: useNative,
+      useNative: useNativeValue,
       nativeLibraryPath: nativeLibraryPath,
     );
   }
@@ -144,9 +147,26 @@ Uint8List _decryptInIsolate(Map<String, Object?> payload) {
   }
   final useNative = payload['useNative'] == true;
   final libraryPath = payload['libraryPath'] as String?;
+  final header = ShieldCrypto.parseHeader(encrypted);
+  if (header.compressed && header.algorithm != 1) {
+    throw const FormatException('Unsupported compression algorithm.');
+  }
   if (useNative) {
     try {
-      return ShieldFfi.load(libraryPath: libraryPath).decrypt(encrypted, key);
+      final plain =
+          ShieldFfi.load(libraryPath: libraryPath).decrypt(encrypted, key);
+      if (header.compressed) {
+        final decompressed = ShieldCompression.decompress(
+          plain,
+          originalLength: header.originalLength,
+        );
+        if (header.originalLength > 0 &&
+            decompressed.lengthInBytes != header.originalLength) {
+          throw const FormatException('Decompressed length mismatch.');
+        }
+        return decompressed;
+      }
+      return plain;
     } catch (_) {
       if (key.isEmpty) {
         throw StateError('Native decrypt failed and no Dart key available.');
@@ -158,10 +178,26 @@ Uint8List _decryptInIsolate(Map<String, Object?> payload) {
 }
 
 Uint8List _decryptLocal(Uint8List encrypted, Uint8List key, ShieldConfig config) {
+  final header = ShieldCrypto.parseHeader(encrypted);
+  if (header.compressed && header.algorithm != 1) {
+    throw const FormatException('Unsupported compression algorithm.');
+  }
   if (config.useNative) {
     try {
-      return ShieldFfi.load(libraryPath: config.nativeLibraryPath)
+      final plain = ShieldFfi.load(libraryPath: config.nativeLibraryPath)
           .decrypt(encrypted, key);
+      if (header.compressed) {
+        final decompressed = ShieldCompression.decompress(
+          plain,
+          originalLength: header.originalLength,
+        );
+        if (header.originalLength > 0 &&
+            decompressed.lengthInBytes != header.originalLength) {
+          throw const FormatException('Decompressed length mismatch.');
+        }
+        return decompressed;
+      }
+      return plain;
     } catch (_) {
       if (key.isEmpty) {
         throw StateError('Native decrypt failed and no Dart key available.');

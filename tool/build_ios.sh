@@ -4,8 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build/ios"
 FRAMEWORK_DIR="${ROOT_DIR}/ios/Frameworks"
+ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
 
+rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}" "${FRAMEWORK_DIR}"
+rm -rf "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
 
 if [[ -n "${ASSET_SHIELD_KEY_BASE64:-}" ]]; then
   if ! command -v dart >/dev/null 2>&1; then
@@ -26,18 +29,33 @@ build_lib() {
   local out_dir=$3
   local cc
   cc="$(xcrun --sdk "${sdk}" --find clang)"
-  "${cc}" -std=c99 -O2 -fvisibility=hidden -fPIC \
-    -isysroot "$(xcrun --sdk "${sdk}" --show-sdk-path)" \
-    -arch "${arch}" \
-    -c "${ROOT_DIR}/native/asset_shield_crypto.c" \
-    -o "${out_dir}/asset_shield_crypto_${arch}.o"
-  libtool -static -o "${out_dir}/libasset_shield_crypto.a" "${out_dir}/asset_shield_crypto_${arch}.o"
+  rm -f "${out_dir}"/*.o "${out_dir}/libasset_shield_crypto.a"
+  local sources=("${ROOT_DIR}/native/asset_shield_crypto.c")
+  while IFS= read -r -d '' src; do
+    sources+=("${src}")
+  done < <(find "${ZSTD_DIR}/common" "${ZSTD_DIR}/compress" "${ZSTD_DIR}/decompress" -name "*.c" -print0)
+
+  local objs=()
+  for src in "${sources[@]}"; do
+    local rel="${src#${ROOT_DIR}/}"
+    local obj="${out_dir}/$(echo "${rel}" | tr '/.' '__').o"
+    "${cc}" -std=c99 -O2 -fvisibility=hidden -fPIC \
+      -DZSTD_DISABLE_ASM=1 \
+      -I "${ZSTD_DIR}" \
+      -isysroot "$(xcrun --sdk "${sdk}" --show-sdk-path)" \
+      -arch "${arch}" \
+      -c "${src}" \
+      -o "${obj}"
+    objs+=("${obj}")
+  done
+  libtool -static -o "${out_dir}/libasset_shield_crypto.a" "${objs[@]}"
 }
 
 build_lib iphoneos arm64 "${IOS_DEVICE}"
 build_lib iphonesimulator arm64 "${IOS_SIM}"
 build_lib iphonesimulator x86_64 "${IOS_SIM}"
 
+rm -f "${IOS_SIM}/libasset_shield_crypto_universal.a"
 lipo -create \
   "${IOS_SIM}/libasset_shield_crypto.a" \
   -output "${IOS_SIM}/libasset_shield_crypto_universal.a"

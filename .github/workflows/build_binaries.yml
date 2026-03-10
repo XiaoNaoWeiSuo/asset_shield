@@ -1,0 +1,81 @@
+name: build-binaries
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS dylib
+        run: ./tool/build_macos.sh
+      - name: Build iOS xcframework
+        run: ./tool/build_ios.sh
+      - name: Upload macOS/iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ios
+          path: |
+            macos/Frameworks/libasset_shield_crypto.dylib
+            ios/Frameworks/AssetShieldCrypto.xcframework
+
+  build-linux-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: sdkmanager "ndk;27.0.12077973"
+      - name: Build Android .so
+        run: ./tool/build_android.sh
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+      - name: Build Linux .so
+        run: ./tool/build_linux.sh
+      - name: Upload Linux/Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-android
+          path: |
+            android/src/main/jniLibs
+            linux/lib/libasset_shield_crypto.so
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows DLL
+        run: ./tool/build_windows.ps1
+        shell: pwsh
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: windows/lib/asset_shield_crypto.dll
+
+  release:
+    needs: [ build-macos, build-linux-android, build-windows ]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/macos-ios/**
+            artifacts/linux-android/**
+            artifacts/windows/**

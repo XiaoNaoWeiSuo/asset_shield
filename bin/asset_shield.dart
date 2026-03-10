@@ -1,89 +1,67 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:args/args.dart';
 import 'package:path/path.dart' as p;
-import 'package:yaml/yaml.dart';
-
 import 'package:asset_shield/crypto.dart';
+import 'package:asset_shield/src/config/shield_cli_config.dart';
 
 Future<void> main(List<String> args) async {
-  final parser = ArgParser();
-
-  final encryptParser = ArgParser()
-    ..addOption(
-      'config',
-      abbr: 'c',
-      defaultsTo: 'shield_config.yaml',
-      help: 'Path to shield_config.yaml',
-    )
-    ..addFlag(
-      'dry-run',
-      negatable: false,
-      help: 'List files without writing outputs.',
-    )
-    ..addFlag(
-      'verbose',
-      abbr: 'v',
-      negatable: false,
-      help: 'Print each processed file.',
-    );
-
-  final genKeyParser = ArgParser()
-    ..addOption(
-      'length',
-      defaultsTo: '32',
-      help: 'Key length in bytes (16 or 32).',
-    );
-
-  parser.addCommand('encrypt', encryptParser);
-  parser.addCommand('gen-key', genKeyParser);
-
   if (args.isEmpty) {
-    _printUsage(parser);
+    _printUsage();
     exitCode = 64;
     return;
   }
 
-  final result = parser.parse(args);
-  final command = result.command;
-  if (command == null) {
-    _printUsage(parser);
-    exitCode = 64;
-    return;
-  }
+  final normalizedArgs = _normalizeArgs(args);
+  final command = normalizedArgs.first;
+  final options = normalizedArgs.sublist(1);
 
-  switch (command.name) {
+  switch (command) {
     case 'encrypt':
-      await _runEncrypt(command);
+      final parsed = _parseEncryptOptions(options);
+      await _runEncrypt(parsed);
       return;
     case 'gen-key':
-      _runGenKey(command);
+      final length = _parseLengthOption(options);
+      _runGenKey(length);
+      return;
+    case 'init':
+      final parsed = _parseInitOptions(options);
+      await _runInit(parsed);
       return;
     default:
-      _printUsage(parser);
+      _printUsage();
       exitCode = 64;
   }
 }
 
-void _printUsage(ArgParser parser) {
+void _printUsage() {
   stdout.writeln('Asset Shield CLI');
   stdout.writeln('Usage: asset_shield <command> [options]');
   stdout.writeln('');
   stdout.writeln('Commands:');
   stdout.writeln('  encrypt  Encrypt assets based on shield_config.yaml');
   stdout.writeln('  gen-key  Generate a random AES key');
+  stdout.writeln('  init     Create a shield_config.yaml template');
   stdout.writeln('');
-  stdout.writeln(parser.usage);
+  stdout.writeln('Options:');
+  stdout.writeln('  encrypt  [--dry-run] [-v|--verbose]');
+  stdout.writeln('  gen-key  [--length <bytes>]');
+  stdout.writeln('  init     [-f|--force] [--no-gen-key] [--no-emit-key]');
 }
 
-Future<void> _runEncrypt(ArgResults command) async {
-  final configPath = command['config'] as String;
-  final dryRun = command['dry-run'] as bool;
-  final verbose = command['verbose'] as bool;
+Future<void> _runEncrypt(_EncryptOptions options) async {
+  const configPath = 'shield_config.yaml';
+  final dryRun = options.dryRun;
+  final verbose = options.verbose;
 
   final config = await ShieldCliConfig.load(configPath);
   final keyBytes = ShieldKey.fromBase64(config.keyBase64);
+  final compression = config.compression;
+  final compressEnabled = compression != 'none';
+  if (compression != 'zstd' && compression != 'none') {
+    stderr.writeln('Unsupported compression "$compression", falling back to none.');
+  }
 
   final rawDir = Directory(config.rawAssetsDir);
   if (!await rawDir.exists()) {
@@ -125,7 +103,12 @@ Future<void> _runEncrypt(ArgResults command) async {
     }
 
     final bytes = await file.readAsBytes();
-    final encrypted = ShieldCrypto.encrypt(Uint8List.fromList(bytes), keyBytes);
+    final encrypted = ShieldCrypto.encrypt(
+      Uint8List.fromList(bytes),
+      keyBytes,
+      compress: compressEnabled && compression == 'zstd',
+      compressionLevel: config.compressionLevel,
+    );
     final outFile = File(encryptedPath);
     await outFile.parent.create(recursive: true);
     await outFile.writeAsBytes(encrypted, flush: true);
@@ -139,10 +122,44 @@ Future<void> _runEncrypt(ArgResults command) async {
   stdout.writeln('Encrypted ${assetMap.length} assets.');
 }
 
-void _runGenKey(ArgResults command) {
-  final length = int.tryParse(command['length'] as String) ?? 32;
+void _runGenKey(int length) {
   final key = ShieldKey.generate(lengthBytes: length);
   stdout.writeln(ShieldKey.toBase64(key));
+}
+
+Future<void> _runInit(_InitOptions options) async {
+  const outputPath = 'shield_config.yaml';
+  final force = options.force;
+  final genKey = options.genKey;
+  final emitKey = options.emitKey;
+
+  final file = File(outputPath);
+  if (await file.exists() && !force) {
+    stderr.writeln('Config already exists: ${file.path}');
+    exitCode = 73;
+    return;
+  }
+
+  final keyBase64 = genKey
+      ? ShieldKey.toBase64(ShieldKey.generate(lengthBytes: 32))
+      : 'REPLACE_WITH_BASE64_KEY';
+
+  final buffer = StringBuffer()
+    ..writeln('raw_assets_dir: assets')
+    ..writeln('encrypted_assets_dir: assets/encrypted')
+    ..writeln('map_output: lib/generated/asset_shield_map.dart')
+    ..writeln('compression: zstd')
+    ..writeln('compression_level: 3')
+    ..writeln('extensions:')
+    ..writeln('  - .png')
+    ..writeln('  - .json')
+    ..writeln('  - .mp3')
+    ..writeln('key: "$keyBase64"')
+    ..writeln('emit_key: ${emitKey ? 'true' : 'false'}');
+
+  await file.parent.create(recursive: true);
+  await file.writeAsString(buffer.toString(), flush: true);
+  stdout.writeln('Wrote config: ${file.path}');
 }
 
 Future<void> _writeMapFile(
@@ -173,6 +190,23 @@ Future<void> _writeMapFile(
   stdout.writeln('Wrote asset map: ${mapFile.path}');
 }
 
+List<String> _normalizeArgs(List<String> args) {
+  if (args.isEmpty) {
+    return args;
+  }
+  final command = args.first;
+  final mapped = switch (command) {
+    'e' || 'enc' => 'encrypt',
+    'g' || 'k' => 'gen-key',
+    'i' => 'init',
+    _ => command,
+  };
+  if (mapped == command) {
+    return args;
+  }
+  return <String>[mapped, ...args.skip(1)];
+}
+
 String _escape(String input) {
   return input.replaceAll('\\', '\\\\').replaceAll("'", r"\'");
 }
@@ -181,80 +215,70 @@ String _toPosix(String input) {
   return input.replaceAll('\\', '/');
 }
 
-class ShieldCliConfig {
-  ShieldCliConfig({
-    required this.rawAssetsDir,
-    required this.encryptedAssetsDir,
-    required this.mapOutput,
-    required this.extensions,
-    required this.keyBase64,
-    required this.emitKey,
-  });
-
-  final String rawAssetsDir;
-  final String encryptedAssetsDir;
-  final String mapOutput;
-  final List<String> extensions;
-  final String keyBase64;
-  final bool emitKey;
-
-  static Future<ShieldCliConfig> load(String path) async {
-    final file = File(path);
-    if (!await file.exists()) {
-      throw StateError('Config file not found: ${file.path}');
+_EncryptOptions _parseEncryptOptions(List<String> args) {
+  var dryRun = false;
+  var verbose = false;
+  for (final arg in args) {
+    switch (arg) {
+      case '--dry-run':
+        dryRun = true;
+      case '-v':
+      case '--verbose':
+        verbose = true;
+      default:
+        stderr.writeln('Unknown option for encrypt: $arg');
+        exitCode = 64;
+        return const _EncryptOptions();
     }
-
-    final content = await file.readAsString();
-    final yaml = loadYaml(content);
-    if (yaml is! YamlMap) {
-      throw StateError('Invalid YAML format in ${file.path}.');
-    }
-
-    String readString(String key, {String? fallback}) {
-      final value = yaml[key];
-      if (value == null) {
-        if (fallback != null) return fallback;
-        throw StateError('Missing required field: $key');
-      }
-      if (value is! String) {
-        throw StateError('Field $key must be a string.');
-      }
-      return value;
-    }
-
-    bool readBool(String key, {bool fallback = false}) {
-      final value = yaml[key];
-      if (value == null) return fallback;
-      if (value is! bool) {
-        throw StateError('Field $key must be a boolean.');
-      }
-      return value;
-    }
-
-    List<String> readExtensions(String key) {
-      final value = yaml[key];
-      if (value == null) return <String>[];
-      if (value is! YamlList) {
-        throw StateError('Field $key must be a list.');
-      }
-      final list = <String>[];
-      for (final item in value) {
-        if (item is! String) {
-          throw StateError('Extension values must be strings.');
-        }
-        final normalized = item.startsWith('.') ? item.toLowerCase() : '.${item.toLowerCase()}';
-        list.add(normalized);
-      }
-      return list;
-    }
-
-    return ShieldCliConfig(
-      rawAssetsDir: readString('raw_assets_dir', fallback: 'assets/raw_assets'),
-      encryptedAssetsDir: readString('encrypted_assets_dir', fallback: 'assets/encrypted'),
-      mapOutput: readString('map_output', fallback: 'lib/generated/asset_shield_map.dart'),
-      extensions: readExtensions('extensions'),
-      keyBase64: readString('key'),
-      emitKey: readBool('emit_key', fallback: false),
-    );
   }
+  return _EncryptOptions(dryRun: dryRun, verbose: verbose);
+}
+
+int _parseLengthOption(List<String> args) {
+  if (args.isEmpty) {
+    return 32;
+  }
+  if (args.length == 2 && (args[0] == '--length' || args[0] == '-l')) {
+    return int.tryParse(args[1]) ?? 32;
+  }
+  stderr.writeln('Unknown option for gen-key: ${args.join(' ')}');
+  exitCode = 64;
+  return 32;
+}
+
+_InitOptions _parseInitOptions(List<String> args) {
+  var force = false;
+  var genKey = true;
+  var emitKey = true;
+  for (final arg in args) {
+    switch (arg) {
+      case '-f':
+      case '--force':
+        force = true;
+      case '--no-gen-key':
+        genKey = false;
+      case '--no-emit-key':
+        emitKey = false;
+      default:
+        stderr.writeln('Unknown option for init: $arg');
+        exitCode = 64;
+        return const _InitOptions();
+    }
+  }
+  return _InitOptions(force: force, genKey: genKey, emitKey: emitKey);
+}
+
+class _EncryptOptions {
+  const _EncryptOptions({this.dryRun = false, this.verbose = false});
+
+  final bool dryRun;
+  final bool verbose;
+}
+
+class _InitOptions {
+  const _InitOptions({this.force = false, this.genKey = true, this.emitKey = true});
+
+  final bool force;
+  final bool genKey;
+  final bool emitKey;
 }

@@ -13,9 +13,9 @@ class ShieldKey {
   }
 
   static Uint8List generate({int lengthBytes = 32}) {
-    if (lengthBytes != 16 && lengthBytes != 32) {
+    if (lengthBytes != 32) {
       throw ArgumentError(
-        'Key length must be 16 or 32 bytes for AES-GCM.',
+        'Key length must be 32 bytes for AES-256-GCM.',
       );
     }
     final random = Random.secure();

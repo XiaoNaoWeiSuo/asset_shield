@@ -1,7 +1,0 @@
-raw_assets_dir: assets
-encrypted_assets_dir: assets/encrypted
-map_output: lib/generated/asset_shield_map.dart
-extensions:
-  - .jpeg
-key: "EW09IuuBnOCan33oT7bK9q4+x0P1ZIu/znAkUETLLP0="
-emit_key: true

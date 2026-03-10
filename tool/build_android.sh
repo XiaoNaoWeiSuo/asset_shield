@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
 
 if [[ -z "${NDK_HOME}" ]]; then
   SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -52,6 +53,12 @@ else
 fi
 
 TOOLCHAIN="${NDK_HOME}/toolchains/llvm/prebuilt/${HOST_TAG}/bin"
+if [[ ! -d "${TOOLCHAIN}" && "${HOST_TAG}" == "darwin-arm64" ]]; then
+  FALLBACK="${NDK_HOME}/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+  if [[ -d "${FALLBACK}" ]]; then
+    TOOLCHAIN="${FALLBACK}"
+  fi
+fi
 if [[ ! -d "${TOOLCHAIN}" ]]; then
   echo "NDK toolchain not found at ${TOOLCHAIN}" >&2
   exit 1
@@ -72,9 +79,12 @@ build_one() {
   local target=$1
   local out=$2
   "${TOOLCHAIN}/clang" -std=c99 -O2 -fPIC -fvisibility=hidden -shared \
+    -DZSTD_DISABLE_ASM=1 \
+    -I "${ZSTD_DIR}" \
     --target="${target}" \
     -o "${out}" \
-    "${ROOT_DIR}/native/asset_shield_crypto.c"
+    "${ROOT_DIR}/native/asset_shield_crypto.c" \
+    $(find "${ZSTD_DIR}/common" "${ZSTD_DIR}/compress" "${ZSTD_DIR}/decompress" -name "*.c")
 }
 
 build_one aarch64-linux-android21 "${OUT_DIR}/arm64-v8a/libasset_shield_crypto.so"

@@ -1,5 +1,6 @@
 #include "asset_shield_crypto.h"
 #include "asset_shield_embedded_key.h"
+#include "zstd.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,9 +11,13 @@
 #define ASSET_SHIELD_ERR_UNSUPPORTED -3
 #define ASSET_SHIELD_ERR_AUTH -4
 #define ASSET_SHIELD_ERR_ALLOC -5
+#define ASSET_SHIELD_ERR_ZSTD -6
 
 static const uint8_t k_magic[4] = {0x41, 0x53, 0x53, 0x54};
-static const uint8_t k_version = 1;
+static const uint8_t k_version1 = 1;
+static const uint8_t k_version2 = 2;
+static const uint8_t k_algo_none = 0;
+static const uint8_t k_algo_zstd = 1;
 static const uint8_t k_tag_len = 16;
 static const uint8_t k_iv_len = 12;
 
@@ -374,7 +379,7 @@ int32_t asset_shield_decrypt(const uint8_t* encrypted_data,
     use_key_len = g_key_len;
   }
 
-  if (use_key_len != 16 && use_key_len != 32) {
+  if (use_key_len != 32) {
     return ASSET_SHIELD_ERR_INVALID_ARGS;
   }
 
@@ -383,14 +388,31 @@ int32_t asset_shield_decrypt(const uint8_t* encrypted_data,
   }
 
   uint8_t version = encrypted_data[4];
-  uint8_t iv_len = encrypted_data[5];
-  if (version != k_version || iv_len != k_iv_len) {
+  uint8_t iv_len = 0;
+  int header_len = 0;
+  if (version == k_version1) {
+    iv_len = encrypted_data[5];
+    header_len = 6;
+  } else if (version == k_version2) {
+    uint8_t flags = encrypted_data[5];
+    uint8_t algo = encrypted_data[6];
+    (void)flags;
+    if (algo != k_algo_none && algo != k_algo_zstd) {
+      return ASSET_SHIELD_ERR_UNSUPPORTED;
+    }
+    iv_len = encrypted_data[7];
+    header_len = 12;
+  } else {
     return ASSET_SHIELD_ERR_UNSUPPORTED;
   }
 
-  const uint8_t* iv = encrypted_data + 6;
-  const uint8_t* cipher = encrypted_data + 6 + iv_len;
-  int32_t cipher_len = length - (int32_t)(6 + iv_len);
+  if (iv_len != k_iv_len) {
+    return ASSET_SHIELD_ERR_UNSUPPORTED;
+  }
+
+  const uint8_t* iv = encrypted_data + header_len;
+  const uint8_t* cipher = encrypted_data + header_len + iv_len;
+  int32_t cipher_len = length - (int32_t)(header_len + iv_len);
   if (cipher_len <= k_tag_len) {
     return ASSET_SHIELD_ERR_BAD_HEADER;
   }
@@ -413,7 +435,7 @@ int32_t asset_shield_decrypt(const uint8_t* encrypted_data,
 }
 
 int32_t asset_shield_set_key(const uint8_t* key, int32_t key_length) {
-  if (!key || (key_length != 16 && key_length != 32)) {
+  if (!key || key_length != 32) {
     return ASSET_SHIELD_ERR_INVALID_ARGS;
   }
   memcpy(g_key, key, (size_t)key_length);
@@ -428,4 +450,63 @@ void asset_shield_clear_key(void) {
 
 void asset_shield_free(uint8_t* data) {
   free(data);
+}
+
+int32_t asset_shield_compress(const uint8_t* data,
+                              int32_t length,
+                              int32_t level,
+                              uint8_t** out_data,
+                              int32_t* out_length) {
+  if (!data || !out_data || !out_length || length < 0) {
+    return ASSET_SHIELD_ERR_INVALID_ARGS;
+  }
+  if (length == 0) {
+    *out_data = NULL;
+    *out_length = 0;
+    return ASSET_SHIELD_OK;
+  }
+  size_t bound = ZSTD_compressBound((size_t)length);
+  uint8_t* out = (uint8_t*)malloc(bound);
+  if (!out) {
+    return ASSET_SHIELD_ERR_ALLOC;
+  }
+  size_t result = ZSTD_compress(out, bound, data, (size_t)length, level);
+  if (ZSTD_isError(result)) {
+    free(out);
+    return ASSET_SHIELD_ERR_ZSTD;
+  }
+  *out_data = out;
+  *out_length = (int32_t)result;
+  return ASSET_SHIELD_OK;
+}
+
+int32_t asset_shield_decompress(const uint8_t* data,
+                                int32_t length,
+                                int32_t original_length,
+                                uint8_t** out_data,
+                                int32_t* out_length) {
+  if (!data || !out_data || !out_length || length < 0) {
+    return ASSET_SHIELD_ERR_INVALID_ARGS;
+  }
+  if (length == 0) {
+    *out_data = NULL;
+    *out_length = 0;
+    return ASSET_SHIELD_OK;
+  }
+  if (original_length <= 0) {
+    return ASSET_SHIELD_ERR_INVALID_ARGS;
+  }
+  uint8_t* out = (uint8_t*)malloc((size_t)original_length);
+  if (!out) {
+    return ASSET_SHIELD_ERR_ALLOC;
+  }
+  size_t result =
+      ZSTD_decompress(out, (size_t)original_length, data, (size_t)length);
+  if (ZSTD_isError(result)) {
+    free(out);
+    return ASSET_SHIELD_ERR_ZSTD;
+  }
+  *out_data = out;
+  *out_length = (int32_t)result;
+  return ASSET_SHIELD_OK;
 }

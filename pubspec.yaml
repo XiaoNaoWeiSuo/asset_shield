@@ -10,7 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  args: ^2.5.0
   ffi: ^2.1.2
   path: ^1.9.0
   pointycastle: ^3.9.1
@@ -19,7 +18,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  lints: ^6.1.0
 
 executables:
   asset_shield: asset_shield
@@ -33,4 +32,8 @@ flutter:
       ios:
         ffiPlugin: true
       macos:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      windows:
         ffiPlugin: true
