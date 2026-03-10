@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+/// Stub FFI for unsupported platforms (e.g. web).
 class ShieldFfi {
   ShieldFfi._();
 

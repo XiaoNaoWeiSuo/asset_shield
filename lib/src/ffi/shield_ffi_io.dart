@@ -62,6 +62,7 @@ typedef _DartDecompress = int Function(
   Pointer<Int32> outLength,
 );
 
+/// FFI bridge to native crypto and compression.
 class ShieldFfi {
   ShieldFfi._(DynamicLibrary library)
       : _decrypt = library.lookupFunction<_NativeDecrypt, _DartDecrypt>(

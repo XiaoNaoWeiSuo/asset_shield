@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import 'shield.dart';
 
+/// Widget that loads, decrypts, and renders an encrypted image asset.
 class ShieldImage extends StatelessWidget {
+  /// Creates a [ShieldImage] for the given encrypted asset path.
   const ShieldImage(
     this.assetPath, {
     super.key,

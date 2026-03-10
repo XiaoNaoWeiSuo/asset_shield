@@ -7,6 +7,7 @@ import 'crypto/shield_crypto.dart';
 import 'crypto/shield_compression.dart';
 import 'ffi/shield_ffi.dart';
 
+/// Runtime configuration for asset decryption.
 class ShieldConfig {
   const ShieldConfig({
     required this.key,
@@ -23,9 +24,13 @@ class ShieldConfig {
   final String? nativeLibraryPath;
 }
 
+/// Asset Shield runtime API.
 class Shield {
   static ShieldConfig? _config;
 
+  /// Initializes the runtime with a Dart key and asset map.
+  ///
+  /// Use [useNative] to enable native decryption (default on non‑web).
   static void initialize({
     required Uint8List key,
     required Map<String, String> assetMap,
@@ -52,8 +57,12 @@ class Shield {
     );
   }
 
+  /// Whether [initialize] has been called.
   static bool get isInitialized => _config != null;
 
+  /// Initializes using a key stored on the native side.
+  ///
+  /// Useful when the key is embedded or provisioned at runtime.
   static void initializeWithNativeKey({
     required Map<String, String> assetMap,
     int isolateThresholdBytes = 512 * 1024,
@@ -68,6 +77,7 @@ class Shield {
     );
   }
 
+  /// Sets or rotates the native key at runtime.
   static void setNativeKey(Uint8List key) {
     final config = _requireConfig();
     if (!config.useNative) {
@@ -76,6 +86,7 @@ class Shield {
     ShieldFfi.load(libraryPath: config.nativeLibraryPath).setKey(key);
   }
 
+  /// Clears the native key from memory.
   static void clearNativeKey() {
     final config = _requireConfig();
     if (!config.useNative) {
@@ -84,6 +95,7 @@ class Shield {
     ShieldFfi.load(libraryPath: config.nativeLibraryPath).clearKey();
   }
 
+  /// Loads and decrypts an asset as raw bytes.
   static Future<Uint8List> loadBytes(String assetPath) async {
     final config = _requireConfig();
     final encryptedPath = _resolveEncryptedPath(config.assetMap, assetPath);
@@ -106,6 +118,7 @@ class Shield {
     return _decryptLocal(encrypted, config.key, config);
   }
 
+  /// Loads and decrypts an asset as a string.
   static Future<String> loadString(
     String assetPath, {
     Encoding encoding = utf8,
@@ -114,6 +127,7 @@ class Shield {
     return encoding.decode(bytes);
   }
 
+  /// Resolves the encrypted asset path from the map.
   static String resolvePath(String assetPath) {
     final config = _requireConfig();
     return _resolveEncryptedPath(config.assetMap, assetPath);

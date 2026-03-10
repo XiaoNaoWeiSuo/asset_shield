@@ -1,3 +1,9 @@
+## 0.0.2
+
+- Add native Zstd compression (no Dart dependency)
+- Improve CLI and publishing metadata
+- Add web stub and public API documentation
+
 ## 0.0.1
 
 - Initial release

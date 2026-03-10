@@ -8,6 +8,7 @@ import 'package:pointycastle/block/modes/gcm.dart';
 
 import 'shield_compression.dart';
 
+/// AES‑256‑GCM encryption/decryption with optional compression header.
 class ShieldCrypto {
   static const List<int> _magic = <int>[0x41, 0x53, 0x53, 0x54];
   static const int _version1 = 1;
@@ -17,6 +18,7 @@ class ShieldCrypto {
   static const int _ivLength = 12;
   static const int _tagLengthBytes = 16;
 
+  /// Encrypts bytes with AES‑256‑GCM and optional compression.
   static Uint8List encrypt(
     Uint8List plainBytes,
     Uint8List keyBytes, {
@@ -54,6 +56,7 @@ class ShieldCrypto {
     return output.toBytes();
   }
 
+  /// Decrypts bytes produced by [encrypt].
   static Uint8List decrypt(Uint8List encryptedBytes, Uint8List keyBytes) {
     _validateKeyLength(keyBytes);
     final header = _parseHeader(encryptedBytes);
@@ -85,6 +88,7 @@ class ShieldCrypto {
     }
   }
 
+  /// Parses the encrypted asset header (for compression metadata).
   static ShieldHeader parseHeader(Uint8List encryptedBytes) {
     return _parseHeader(encryptedBytes);
   }
@@ -226,6 +230,7 @@ class ShieldCrypto {
   }
 }
 
+/// Parsed header for an encrypted asset payload.
 class ShieldHeader {
   ShieldHeader({
     required this.version,

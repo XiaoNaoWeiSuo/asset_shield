@@ -1,6 +1,6 @@
 name: asset_shield
 description: "Native asset encryption and compression for Flutter."
-version: 0.0.1
+version: 0.0.2
 homepage: https://github.com/XiaoNaoWeiSuo/asset_shield
 repository: https://github.com/XiaoNaoWeiSuo/asset_shield.git
 issue_tracker: https://github.com/XiaoNaoWeiSuo/asset_shield/issues
@@ -12,9 +12,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
   ffi: ^2.1.2
   path: ^1.9.0
-  pointycastle: ^3.9.1
+  pointycastle: ^4.0.0
   yaml: ^3.1.3
 
 dev_dependencies:
@@ -39,3 +41,6 @@ flutter:
         ffiPlugin: true
       windows:
         ffiPlugin: true
+      web:
+        pluginClass: AssetShieldWeb
+        fileName: asset_shield_web.dart
