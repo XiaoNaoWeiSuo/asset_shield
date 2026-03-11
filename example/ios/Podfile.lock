@@ -1,5 +1,6 @@
 PODS:
-  - asset_shield (0.0.1)
+  - asset_shield (0.0.1):
+    - Flutter
   - Flutter (1.0.0)
   - integration_test (0.0.1):
     - Flutter
@@ -18,7 +19,7 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/integration_test/ios"
 
 SPEC CHECKSUMS:
-  asset_shield: b004ff778530dec32c2fc4cbcc63df3b27393f27
+  asset_shield: 63ae482425b0d99ccff35b9cfca9c34cbd177bd4
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
 
