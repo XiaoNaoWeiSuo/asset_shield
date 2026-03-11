@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math';
@@ -59,6 +60,7 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
   final verbose = options.verbose;
 
   final config = await ShieldCliConfig.load(configPath);
+  final ffi = _loadCliFfi(verbose: verbose);
   final keyBytes = ShieldKey.fromBase64(config.keyBase64);
   final compression = config.compression;
   final compressEnabled = compression != 'none';
@@ -115,7 +117,7 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
       for (var i = 8; i < 12; i++) {
         baseIv[i] = 0;
       }
-      ShieldFfi.load().encryptFile(
+      ffi.encryptFile(
         file.path,
         encryptedPath,
         keyBytes,
@@ -264,6 +266,82 @@ Uint8List _randomBytes(int length) {
 
 String _toPosix(String input) {
   return input.replaceAll('\\', '/');
+}
+
+ShieldFfi _loadCliFfi({required bool verbose}) {
+  try {
+    return ShieldFfi.load();
+  } catch (error) {
+    final resolved = _resolveBundledLibraryFromPackageRoot();
+    if (resolved != null && File(resolved).existsSync()) {
+      if (verbose) {
+        stdout.writeln('Using native library: $resolved');
+      }
+      return ShieldFfi.load(libraryPath: resolved);
+    }
+    stderr.writeln('Failed to load native library for asset_shield encrypt.');
+    if (resolved != null) {
+      stderr.writeln('Tried: $resolved');
+    }
+    stderr.writeln('Set ASSET_SHIELD_NATIVE_LIB to the library path, or rebuild native libs.');
+    stderr.writeln('Original error: $error');
+    exitCode = 70;
+    throw error;
+  }
+}
+
+String? _resolveBundledLibraryFromPackageRoot() {
+  final root = _packageRootFromConfig();
+  if (root == null) return null;
+  if (Platform.isWindows) {
+    return p.join(root, 'windows', 'lib', 'asset_shield_crypto.dll');
+  }
+  if (Platform.isLinux) {
+    return p.join(root, 'linux', 'lib', 'libasset_shield_crypto.so');
+  }
+  if (Platform.isMacOS) {
+    return p.join(root, 'macos', 'Frameworks', 'libasset_shield_crypto.dylib');
+  }
+  return null;
+}
+
+String? _packageRootFromConfig() {
+  final configFile = File(p.join(Directory.current.path, '.dart_tool', 'package_config.json'));
+  if (!configFile.existsSync()) {
+    return _packageRootFromScript();
+  }
+  try {
+    final jsonData = jsonDecode(configFile.readAsStringSync());
+    final packages = jsonData['packages'];
+    if (packages is! List) return _packageRootFromScript();
+    for (final entry in packages) {
+      if (entry is! Map) continue;
+      if (entry['name'] != 'asset_shield') continue;
+      final rootUri = entry['rootUri'];
+      if (rootUri is! String) continue;
+      final base = configFile.parent.uri;
+      final resolved = base.resolve(rootUri);
+      final path = p.fromUri(resolved);
+      return path;
+    }
+  } catch (_) {
+    return _packageRootFromScript();
+  }
+  return _packageRootFromScript();
+}
+
+String? _packageRootFromScript() {
+  try {
+    if (Platform.script.scheme != 'file') return null;
+    final scriptPath = p.fromUri(Platform.script);
+    var dir = Directory(p.dirname(scriptPath));
+    if (p.basename(dir.path) == 'bin') {
+      return dir.parent.path;
+    }
+    return dir.parent.path;
+  } catch (_) {
+    return null;
+  }
 }
 
 _EncryptOptions _parseEncryptOptions(List<String> args) {

@@ -8,6 +8,7 @@ native libraries (AES‑256‑GCM) with optional native Zstd compression.
 
 - Encrypt any asset type (images, audio, JSON, models, etc.)
 - Native AES‑256‑GCM encryption/decryption on Android/iOS/macOS/Linux/Windows
+- Windows supported for native runtime and CLI encryption
 - Hardware‑accelerated AES on supported platforms
 - Native Zstd compression with multi‑threading
 - Native asset read path (no AssetBundle load required)
@@ -142,6 +143,11 @@ dart run asset_shield init
 dart run asset_shield encrypt
 dart run asset_shield gen-key --length 32
 ```
+
+If `dart run asset_shield encrypt` cannot locate the native library when running
+from pub cache, set `ASSET_SHIELD_NATIVE_LIB` to the full path of the bundled
+library (for example: `windows/lib/asset_shield_crypto.dll`,
+`linux/lib/libasset_shield_crypto.so`, or `macos/Frameworks/libasset_shield_crypto.dylib`).
 
 ### Native Libraries (prebuilt)
 

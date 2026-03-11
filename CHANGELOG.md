@@ -1,3 +1,8 @@
+## 0.1.5
+
+- Add Windows support
+- Fix CLI native library resolution when running from pub cache
+
 ## 0.1.4
 
 - Major performance upgrade with native hardware-accelerated AES on supported platforms
