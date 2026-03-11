@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:asset_shield/asset_shield.dart';
 import 'package:asset_shield/crypto.dart';
@@ -85,24 +84,18 @@ class BenchPage extends StatefulWidget {
 
 class _BenchPageState extends State<BenchPage> {
   final _assetPathController =
-      TextEditingController(text: 'assets/images/images.jpeg');
+      TextEditingController(text: 'assets/images/images.jpg');
   final _itersController = TextEditingController(text: '20');
-  final _cryptoWorkersController = TextEditingController(text: '-1');
-  final _zstdWorkersController = TextEditingController(text: '-1');
 
   bool _warmup = true;
   bool _running = false;
   String _log = '';
-  ui.Image? _preview;
   _BenchSummary? _lastSummary;
 
   @override
   void dispose() {
     _assetPathController.dispose();
     _itersController.dispose();
-    _cryptoWorkersController.dispose();
-    _zstdWorkersController.dispose();
-    _preview?.dispose();
     super.dispose();
   }
 
@@ -119,14 +112,11 @@ class _BenchPageState extends State<BenchPage> {
     required _BenchMode mode,
     required int cryptoWorkers,
     required int zstdWorkers,
-    required bool decode,
   }) async {
     int bundleLoadUs = 0;
     int decryptUs = 0;
-    int decodeUs = 0;
     int plainBytes = 0;
     int encBytes = 0;
-    ui.Image? image;
 
     if (mode == _BenchMode.nativeRead) {
       final sw = Stopwatch()..start();
@@ -140,16 +130,6 @@ class _BenchPageState extends State<BenchPage> {
         sw.stop();
         decryptUs = sw.elapsedMicroseconds;
         plainBytes = out.length;
-
-        if (decode) {
-          final swDecode = Stopwatch()..start();
-          final codec = await ui.instantiateImageCodec(out);
-          final frame = await codec.getNextFrame();
-          codec.dispose();
-          swDecode.stop();
-          decodeUs = swDecode.elapsedMicroseconds;
-          image = frame.image;
-        }
       } finally {
         ffi.release(out);
       }
@@ -174,16 +154,6 @@ class _BenchPageState extends State<BenchPage> {
         swDec.stop();
         decryptUs = swDec.elapsedMicroseconds;
         plainBytes = out.length;
-
-        if (decode) {
-          final swDecode = Stopwatch()..start();
-          final codec = await ui.instantiateImageCodec(out);
-          final frame = await codec.getNextFrame();
-          codec.dispose();
-          swDecode.stop();
-          decodeUs = swDecode.elapsedMicroseconds;
-          image = frame.image;
-        }
       } finally {
         ffi.release(out);
       }
@@ -193,10 +163,8 @@ class _BenchPageState extends State<BenchPage> {
       mode: mode,
       bundleLoadUs: bundleLoadUs,
       decryptUs: decryptUs,
-      decodeUs: decodeUs,
       plainBytes: plainBytes,
       encBytes: encBytes,
-      image: image,
     );
   }
 
@@ -211,17 +179,13 @@ class _BenchPageState extends State<BenchPage> {
 
     final log = StringBuffer();
     _BenchSummary? summary;
-    ui.Image? last;
-
     try {
       final ffi = ShieldFfi.load();
       final key = ShieldKey.fromBase64(assetShieldKeyBase64);
 
       final iters = int.tryParse(_itersController.text.trim()) ?? 20;
-      final cryptoWorkers =
-          _normalizeWorkers(int.tryParse(_cryptoWorkersController.text.trim()) ?? -1);
-      final zstdWorkers =
-          _normalizeWorkers(int.tryParse(_zstdWorkersController.text.trim()) ?? -1);
+      final cryptoWorkers = _normalizeWorkers(-1);
+      final zstdWorkers = _normalizeWorkers(-1);
 
       final originalPath = _assetPathController.text.trim();
       if (originalPath.isEmpty) {
@@ -247,7 +211,6 @@ class _BenchPageState extends State<BenchPage> {
           mode: mode,
           cryptoWorkers: cryptoWorkers,
           zstdWorkers: zstdWorkers,
-          decode: false,
         );
         log.writeln('预热完成。');
         log.writeln('');
@@ -264,23 +227,16 @@ class _BenchPageState extends State<BenchPage> {
           mode: mode,
           cryptoWorkers: cryptoWorkers,
           zstdWorkers: zstdWorkers,
-          decode: true,
         );
         summary.add(r);
 
         log.writeln('  bundleLoad: ${(r.bundleLoadUs / 1000).toStringAsFixed(2)} ms');
         log.writeln('  解密耗时: ${(r.decryptUs / 1000).toStringAsFixed(2)} ms');
-        log.writeln('  解码耗时: ${(r.decodeUs / 1000).toStringAsFixed(2)} ms');
         log.writeln(
           '  总耗时: ${(r.totalUs / 1000).toStringAsFixed(2)} ms, '
           '吞吐: ${r.throughputMiBs.toStringAsFixed(2)} MiB/s',
         );
         log.writeln('');
-
-        if (r.image != null) {
-          last?.dispose();
-          last = r.image;
-        }
         if (!mounted) break;
       }
     } catch (e, st) {
@@ -289,8 +245,6 @@ class _BenchPageState extends State<BenchPage> {
     } finally {
       if (!mounted) return;
       setState(() {
-        _preview?.dispose();
-        _preview = last;
         _log = log.toString();
         _lastSummary = summary;
         _running = false;
@@ -326,15 +280,13 @@ class _BenchPageState extends State<BenchPage> {
                 running: _running,
                 assetPathController: _assetPathController,
                 itersController: _itersController,
-                cryptoWorkersController: _cryptoWorkersController,
-                zstdWorkersController: _zstdWorkersController,
                 warmup: _warmup,
                 onWarmupChanged: (v) => setState(() => _warmup = v),
                 onRunNative: () => _runBench(_BenchMode.nativeRead),
                 onRunBundle: () => _runBench(_BenchMode.bundleRead),
               ),
               const SizedBox(height: 12),
-              _ResultCard(preview: _preview, summary: summary),
+              _ResultCard(summary: summary),
               const SizedBox(height: 12),
               _LogCard(log: _log),
             ],
@@ -415,8 +367,6 @@ class _ControlsCard extends StatelessWidget {
     required this.running,
     required this.assetPathController,
     required this.itersController,
-    required this.cryptoWorkersController,
-    required this.zstdWorkersController,
     required this.warmup,
     required this.onWarmupChanged,
     required this.onRunNative,
@@ -426,8 +376,6 @@ class _ControlsCard extends StatelessWidget {
   final bool running;
   final TextEditingController assetPathController;
   final TextEditingController itersController;
-  final TextEditingController cryptoWorkersController;
-  final TextEditingController zstdWorkersController;
   final bool warmup;
   final ValueChanged<bool> onWarmupChanged;
   final VoidCallback onRunNative;
@@ -478,32 +426,6 @@ class _ControlsCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: cryptoWorkersController,
-                    enabled: !running,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'cryptoWorkers',
-                      helperText: '-1=自动，0/1=单线程',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: zstdWorkersController,
-                    enabled: !running,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'zstdWorkers',
-                      helperText: '-1=自动，0/1=单线程',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -537,9 +459,8 @@ class _ControlsCard extends StatelessWidget {
 }
 
 class _ResultCard extends StatelessWidget {
-  const _ResultCard({required this.preview, required this.summary});
+  const _ResultCard({required this.summary});
 
-  final ui.Image? preview;
   final _BenchSummary? summary;
 
   @override
@@ -564,31 +485,9 @@ class _ResultCard extends StatelessWidget {
                   ),
             ),
             const SizedBox(height: 12),
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: scheme.surfaceContainerHighest,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: preview == null
-                    ? Center(
-                        child: Text(
-                          '尚未运行\n点击上方按钮开始测试',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        ),
-                      )
-                    : RawImage(image: preview),
-              ),
-            ),
-            const SizedBox(height: 12),
             if (summary == null)
               Text(
-                '说明: 这里统计的是端到端耗时（读取+解密(+解压)+解码）。',
+                '说明: 这里统计的是端到端耗时（读取+解密(+解压)）。',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),
@@ -641,9 +540,6 @@ class _SummaryView extends StatelessWidget {
           ],
           const SizedBox(height: 4),
           Text('解密: ${summary.avgDecryptMs.toStringAsFixed(2)} ms',
-              style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Text('解码: ${summary.avgDecodeMs.toStringAsFixed(2)} ms',
               style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
@@ -719,21 +615,17 @@ class _OneRun {
     required this.mode,
     required this.bundleLoadUs,
     required this.decryptUs,
-    required this.decodeUs,
     required this.plainBytes,
     required this.encBytes,
-    required this.image,
   });
 
   final _BenchMode mode;
   final int bundleLoadUs;
   final int decryptUs;
-  final int decodeUs;
   final int plainBytes;
   final int encBytes;
-  final ui.Image? image;
 
-  int get totalUs => bundleLoadUs + decryptUs + decodeUs;
+  int get totalUs => bundleLoadUs + decryptUs;
 
   double get throughputMiBs {
     final sec = totalUs / 1e6;
@@ -749,7 +641,6 @@ class _BenchSummary {
     required this.runs,
     required this.totalBundleLoadUs,
     required this.totalDecryptUs,
-    required this.totalDecodeUs,
     required this.totalPlainBytes,
   });
 
@@ -759,7 +650,6 @@ class _BenchSummary {
       runs: 0,
       totalBundleLoadUs: 0,
       totalDecryptUs: 0,
-      totalDecodeUs: 0,
       totalPlainBytes: 0,
     );
   }
@@ -768,26 +658,23 @@ class _BenchSummary {
   int runs;
   int totalBundleLoadUs;
   int totalDecryptUs;
-  int totalDecodeUs;
   int totalPlainBytes;
 
   void add(_OneRun run) {
     runs += 1;
     totalBundleLoadUs += run.bundleLoadUs;
     totalDecryptUs += run.decryptUs;
-    totalDecodeUs += run.decodeUs;
     totalPlainBytes += run.plainBytes;
   }
 
   double get avgBundleLoadMs => runs == 0 ? 0 : totalBundleLoadUs / runs / 1000.0;
   double get avgDecryptMs => runs == 0 ? 0 : totalDecryptUs / runs / 1000.0;
-  double get avgDecodeMs => runs == 0 ? 0 : totalDecodeUs / runs / 1000.0;
 
   double get avgTotalMs =>
-      runs == 0 ? 0 : (totalBundleLoadUs + totalDecryptUs + totalDecodeUs) / runs / 1000.0;
+      runs == 0 ? 0 : (totalBundleLoadUs + totalDecryptUs) / runs / 1000.0;
 
   double get avgThroughputMiBs {
-    final sec = (totalBundleLoadUs + totalDecryptUs + totalDecodeUs) / 1e6;
+    final sec = (totalBundleLoadUs + totalDecryptUs) / 1e6;
     final mib = totalPlainBytes / (1024 * 1024);
     if (sec == 0) return 0;
     return mib / sec;
