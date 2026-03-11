@@ -8,9 +8,12 @@ native libraries (AES‑256‑GCM) with optional native Zstd compression.
 
 - Encrypt any asset type (images, audio, JSON, models, etc.)
 - Native AES‑256‑GCM encryption/decryption on Android/iOS/macOS/Linux/Windows
+- Hardware‑accelerated AES on supported platforms
 - Native Zstd compression with multi‑threading
+- Native asset read path (no AssetBundle load required)
 - Simple CLI workflow (`init` + `encrypt`)
-- Chunked V3 format for large assets and parallel crypto
+- Chunked V4 format for large assets and parallel crypto
+- Encrypted filename auto‑derivation (hashed paths only, no asset map)
 
 Note: Web is not supported.
 
@@ -53,6 +56,7 @@ Notes:
 - `crypto_workers` affects runtime decrypt parallelism (CLI encrypt is single-threaded).
 - Key length must be 32 bytes for AES‑256‑GCM.
 - `useNative` must be true (Dart crypto removed).
+- `useNativeAssetRead` enables native asset IO (default on non‑web).
 - Hashed filenames are always used (no plaintext map).
   - This obscures asset filenames in the package, but your source still contains original paths.
 

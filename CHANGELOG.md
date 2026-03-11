@@ -1,3 +1,11 @@
+## 0.1.4
+
+- Major performance upgrade with native hardware-accelerated AES on supported platforms
+- Add native asset read path (no AssetBundle load required)
+- Chunked V4 format for large assets and parallel crypto
+- Remove web support
+- Auto-derive encrypted filenames (hashed paths only); remove asset map
+
 ## 0.0.4
 
 - Remove asset map usage; hashed filenames only
