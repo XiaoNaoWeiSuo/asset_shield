@@ -7,10 +7,12 @@ native libraries (AES‑256‑GCM) with optional native Zstd compression.
 ## Features
 
 - Encrypt any asset type (images, audio, JSON, models, etc.)
-- Native AES‑256‑GCM decryption on Android/iOS/macOS/Linux/Windows
-- Native Zstd compression (smaller packages, faster I/O)
+- Native AES‑256‑GCM encryption/decryption on Android/iOS/macOS/Linux/Windows
+- Native Zstd compression with multi‑threading
 - Simple CLI workflow (`init` + `encrypt`)
-- Pure Dart fallback on web (disable compression)
+- Chunked V3 format for large assets and parallel crypto
+
+Note: Web is not supported.
 
 ## Quick Start
 
@@ -27,9 +29,12 @@ This generates `shield_config.yaml` in your project root.
 ```yaml
 raw_assets_dir: assets
 encrypted_assets_dir: assets/encrypted
-map_output: lib/generated/asset_shield_map.dart
+config_output: lib/generated/asset_shield_config.dart
 compression: zstd
 compression_level: 3
+chunk_size: 262144
+crypto_workers: -1
+zstd_workers: -1
 extensions:
   - .png
   - .jpg
@@ -41,8 +46,15 @@ emit_key: true
 ```
 
 Notes:
-- `compression: zstd` compresses all assets and keeps the smaller result.
-- For web builds, set `compression: none`.
+- `compression: zstd` compresses per‑chunk and keeps the smaller result.
+- `chunk_size` controls crypto chunking (bytes).
+- `crypto_workers`/`zstd_workers`: `-1` = auto, `0/1` = single-thread.
+- `zstd_workers` currently affects compression only (decompression is single-threaded).
+- `crypto_workers` affects runtime decrypt parallelism (CLI encrypt is single-threaded).
+- Key length must be 32 bytes for AES‑256‑GCM.
+- `useNative` must be true (Dart crypto removed).
+- Hashed filenames are always used (no plaintext map).
+  - This obscures asset filenames in the package, but your source still contains original paths.
 
 ### 3) Encrypt assets
 
@@ -52,7 +64,7 @@ dart run asset_shield encrypt
 
 Outputs:
 - Encrypted assets: `assets/encrypted/*`
-- Asset map: `lib/generated/asset_shield_map.dart`
+- Config output: `lib/generated/asset_shield_config.dart`
 
 ### 4) Register encrypted assets
 
@@ -67,13 +79,13 @@ flutter:
 ```dart
 import 'package:asset_shield/asset_shield.dart';
 import 'package:asset_shield/crypto.dart';
-import 'generated/asset_shield_map.dart';
+import 'generated/asset_shield_config.dart';
 
 void main() {
   final key = ShieldKey.fromBase64(assetShieldKeyBase64);
   Shield.initialize(
     key: key,
-    assetMap: assetShieldMap,
+    encryptedAssetsDir: assetShieldEncryptedDir,
   );
   runApp(const MyApp());
 }
@@ -90,11 +102,24 @@ final bytes = await Shield.loadBytes('assets/config.json');
 final json = await Shield.loadString('assets/config.json');
 ```
 
+### 7) Seamless Image.asset support (AssetBundle injection)
+
+```dart
+return DefaultAssetBundle(
+  bundle: ShieldAssetBundle(),
+  child: const MyApp(),
+);
+```
+
+This makes existing `Image.asset('...')` calls load and decrypt automatically.
+Calls that use `rootBundle.load` are not intercepted; prefer `DefaultAssetBundle`
+or `Shield.loadBytes` for those.
+
 ## API Reference
 
 ### Core
-- `Shield.initialize({ key, assetMap, isolateThresholdBytes, useNative, nativeLibraryPath })`
-- `Shield.initializeWithNativeKey({ assetMap, isolateThresholdBytes, nativeLibraryPath })`
+- `Shield.initialize({ key, isolateThresholdBytes, useNative, nativeLibraryPath, encryptedAssetsDir, cryptoWorkers, zstdWorkers })`
+- `Shield.initializeWithNativeKey({ isolateThresholdBytes, nativeLibraryPath, encryptedAssetsDir, cryptoWorkers, zstdWorkers })`
 - `Shield.setNativeKey(keyBytes)`
 - `Shield.clearNativeKey()`
 - `Shield.loadBytes(assetPath)`
@@ -102,6 +127,7 @@ final json = await Shield.loadString('assets/config.json');
 
 ### Widgets
 - `ShieldImage(assetPath)`
+- `ShieldAssetBundle` (AssetBundle injection)
 
 ## Developer Guide
 
@@ -172,11 +198,6 @@ You can also set/rotate keys at runtime:
 Shield.setNativeKey(keyBytes);
 Shield.clearNativeKey();
 ```
-
-## Web
-
-Web does not support native Zstd.  
-Set `compression: none` for web builds.
 
 ## License
 

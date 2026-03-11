@@ -78,12 +78,13 @@ mkdir -p "${OUT_DIR}/arm64-v8a" "${OUT_DIR}/armeabi-v7a" "${OUT_DIR}/x86_64"
 build_one() {
   local target=$1
   local out=$2
-  "${TOOLCHAIN}/clang" -std=c99 -O2 -fPIC -fvisibility=hidden -shared \
-    -DZSTD_DISABLE_ASM=1 \
+  "${TOOLCHAIN}/clang" -std=c99 -O2 -fPIC -fvisibility=hidden -shared -pthread \
+    -DZSTD_MULTITHREAD=1 -DZSTD_DISABLE_ASM=1 \
     -I "${ZSTD_DIR}" \
     --target="${target}" \
     -o "${out}" \
     "${ROOT_DIR}/native/asset_shield_crypto.c" \
+    "${ROOT_DIR}/native/asset_shield_android_jni.c" \
     $(find "${ZSTD_DIR}/common" "${ZSTD_DIR}/compress" "${ZSTD_DIR}/decompress" -name "*.c")
 }
 

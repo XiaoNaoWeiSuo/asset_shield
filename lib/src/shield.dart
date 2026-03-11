@@ -1,27 +1,43 @@
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
-import 'crypto/shield_crypto.dart';
-import 'crypto/shield_compression.dart';
+import 'crypto/shield_hash.dart';
 import 'ffi/shield_ffi.dart';
 
 /// Runtime configuration for asset decryption.
 class ShieldConfig {
   const ShieldConfig({
     required this.key,
-    required this.assetMap,
     this.isolateThresholdBytes = 512 * 1024,
     this.useNative = true,
     this.nativeLibraryPath,
+    this.encryptedAssetsDir = 'assets/encrypted',
+    this.pathResolver,
+    this.cryptoWorkers = 1,
+    this.zstdWorkers = 1,
+    this.useNativeAssetRead = true,
   });
 
   final Uint8List key;
-  final Map<String, String> assetMap;
   final int isolateThresholdBytes;
   final bool useNative;
   final String? nativeLibraryPath;
+  final String encryptedAssetsDir;
+  final String Function(String assetPath)? pathResolver;
+  final int cryptoWorkers;
+  final int zstdWorkers;
+  final bool useNativeAssetRead;
+}
+
+/// Helpers for resolving encrypted asset paths.
+class ShieldPathResolver {
+  static String hash(String assetPath, {required String encryptedAssetsDir}) {
+    final hash = ShieldHash.sha256Hex(assetPath);
+    return '$encryptedAssetsDir/$hash.dat';
+  }
 }
 
 /// Asset Shield runtime API.
@@ -33,28 +49,41 @@ class Shield {
   /// Use [useNative] to enable native decryption (default on non‑web).
   static void initialize({
     required Uint8List key,
-    required Map<String, String> assetMap,
     int isolateThresholdBytes = 512 * 1024,
     bool? useNative,
     String? nativeLibraryPath,
+    String encryptedAssetsDir = 'assets/encrypted',
+    String Function(String assetPath)? pathResolver,
+    int cryptoWorkers = -1,
+    int zstdWorkers = -1,
+    bool useNativeAssetRead = true,
   }) {
-    final useNativeValue = useNative ?? !kIsWeb;
+    final useNativeValue = useNative ?? true;
+    if (!useNativeValue) {
+      throw ArgumentError('Dart crypto has been removed; useNative must be true.');
+    }
     final keyLength = key.lengthInBytes;
-    if (keyLength != 16 &&
-        keyLength != 32 &&
-        !(useNativeValue && keyLength == 0)) {
-      throw ArgumentError('Key length must be 16 or 32 bytes for AES-GCM.');
+    if (keyLength != 32 && !(useNativeValue && keyLength == 0)) {
+      throw ArgumentError('Key length must be 32 bytes for AES-256-GCM.');
     }
     if (isolateThresholdBytes <= 0) {
       throw ArgumentError('isolateThresholdBytes must be positive.');
     }
     _config = ShieldConfig(
       key: key,
-      assetMap: assetMap,
       isolateThresholdBytes: isolateThresholdBytes,
       useNative: useNativeValue,
       nativeLibraryPath: nativeLibraryPath,
+      encryptedAssetsDir: encryptedAssetsDir,
+      pathResolver: pathResolver,
+      cryptoWorkers: _normalizeWorkers(cryptoWorkers),
+      zstdWorkers: _normalizeWorkers(zstdWorkers),
+      useNativeAssetRead: useNativeAssetRead,
     );
+
+    if (useNativeAssetRead) {
+      _tryInitDesktopAssetsBasePath(_config!);
+    }
   }
 
   /// Whether [initialize] has been called.
@@ -64,16 +93,24 @@ class Shield {
   ///
   /// Useful when the key is embedded or provisioned at runtime.
   static void initializeWithNativeKey({
-    required Map<String, String> assetMap,
     int isolateThresholdBytes = 512 * 1024,
     String? nativeLibraryPath,
+    String encryptedAssetsDir = 'assets/encrypted',
+    String Function(String assetPath)? pathResolver,
+    int cryptoWorkers = -1,
+    int zstdWorkers = -1,
+    bool useNativeAssetRead = true,
   }) {
     initialize(
       key: Uint8List(0),
-      assetMap: assetMap,
       isolateThresholdBytes: isolateThresholdBytes,
       useNative: true,
       nativeLibraryPath: nativeLibraryPath,
+      encryptedAssetsDir: encryptedAssetsDir,
+      pathResolver: pathResolver,
+      cryptoWorkers: cryptoWorkers,
+      zstdWorkers: zstdWorkers,
+      useNativeAssetRead: useNativeAssetRead,
     );
   }
 
@@ -98,23 +135,22 @@ class Shield {
   /// Loads and decrypts an asset as raw bytes.
   static Future<Uint8List> loadBytes(String assetPath) async {
     final config = _requireConfig();
-    final encryptedPath = _resolveEncryptedPath(config.assetMap, assetPath);
-    final data = await rootBundle.load(encryptedPath);
-    final encrypted = Uint8List.fromList(
-      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-    );
-
-    if (encrypted.lengthInBytes >= config.isolateThresholdBytes) {
-      return compute(
-        _decryptInIsolate,
-        <String, Object?>{
-          'data': encrypted,
-          'key': config.key,
-          'useNative': config.useNative,
-          'libraryPath': config.nativeLibraryPath,
-        },
-      );
+    final encryptedPath = _resolveEncryptedPath(config, assetPath);
+    if (config.useNativeAssetRead) {
+      try {
+        return ShieldFfi.load(libraryPath: config.nativeLibraryPath).decryptAsset(
+          encryptedPath,
+          config.key,
+          cryptoWorkers: config.cryptoWorkers,
+          zstdWorkers: config.zstdWorkers,
+        );
+      } catch (_) {
+        // Fallback to AssetBundle path if native asset read isn't initialized.
+      }
     }
+
+    final data = await rootBundle.load(encryptedPath);
+    final encrypted = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
     return _decryptLocal(encrypted, config.key, config);
   }
 
@@ -130,7 +166,20 @@ class Shield {
   /// Resolves the encrypted asset path from the map.
   static String resolvePath(String assetPath) {
     final config = _requireConfig();
-    return _resolveEncryptedPath(config.assetMap, assetPath);
+    return _resolveEncryptedPath(config, assetPath);
+  }
+
+  /// Returns the encrypted asset path if mapped, otherwise null.
+  static String? resolvePathOrNull(String assetPath) {
+    final config = _config;
+    if (config == null) return null;
+    return _resolveEncryptedPathOrNull(config, assetPath);
+  }
+
+  /// Decrypts an encrypted asset payload using the current configuration.
+  static Uint8List decryptBytes(Uint8List encryptedBytes) {
+    final config = _requireConfig();
+    return _decryptLocal(encryptedBytes, config.key, config);
   }
 
   static ShieldConfig _requireConfig() {
@@ -141,83 +190,58 @@ class Shield {
     return config;
   }
 
-  static String _resolveEncryptedPath(
-    Map<String, String> assetMap,
-    String assetPath,
-  ) {
-    final encryptedPath = assetMap[assetPath];
-    if (encryptedPath == null || encryptedPath.isEmpty) {
+  static String _resolveEncryptedPath(ShieldConfig config, String assetPath) {
+    final path = _resolveEncryptedPathOrNull(config, assetPath);
+    if (path == null || path.isEmpty) {
       throw StateError('Encrypted asset not found for: $assetPath');
     }
-    return encryptedPath;
+    return path;
   }
-}
 
-Uint8List _decryptInIsolate(Map<String, Object?> payload) {
-  final encrypted = payload['data'];
-  final key = payload['key'];
-  if (encrypted is! Uint8List || key is! Uint8List) {
-    throw StateError('Invalid isolate payload for decryption.');
-  }
-  final useNative = payload['useNative'] == true;
-  final libraryPath = payload['libraryPath'] as String?;
-  final header = ShieldCrypto.parseHeader(encrypted);
-  if (header.compressed && header.algorithm != 1) {
-    throw const FormatException('Unsupported compression algorithm.');
-  }
-  if (useNative) {
-    try {
-      final plain =
-          ShieldFfi.load(libraryPath: libraryPath).decrypt(encrypted, key);
-      if (header.compressed) {
-        final decompressed = ShieldCompression.decompress(
-          plain,
-          originalLength: header.originalLength,
-        );
-        if (header.originalLength > 0 &&
-            decompressed.lengthInBytes != header.originalLength) {
-          throw const FormatException('Decompressed length mismatch.');
-        }
-        return decompressed;
-      }
-      return plain;
-    } catch (_) {
-      if (key.isEmpty) {
-        throw StateError('Native decrypt failed and no Dart key available.');
-      }
-      return ShieldCrypto.decrypt(encrypted, key);
+  static String? _resolveEncryptedPathOrNull(
+    ShieldConfig config,
+    String assetPath,
+  ) {
+    if (config.pathResolver != null) {
+      return config.pathResolver!(assetPath);
     }
+    return ShieldPathResolver.hash(
+      assetPath,
+      encryptedAssetsDir: config.encryptedAssetsDir,
+    );
   }
-  return ShieldCrypto.decrypt(encrypted, key);
 }
 
 Uint8List _decryptLocal(Uint8List encrypted, Uint8List key, ShieldConfig config) {
-  final header = ShieldCrypto.parseHeader(encrypted);
-  if (header.compressed && header.algorithm != 1) {
-    throw const FormatException('Unsupported compression algorithm.');
-  }
   if (config.useNative) {
-    try {
-      final plain = ShieldFfi.load(libraryPath: config.nativeLibraryPath)
-          .decrypt(encrypted, key);
-      if (header.compressed) {
-        final decompressed = ShieldCompression.decompress(
-          plain,
-          originalLength: header.originalLength,
-        );
-        if (header.originalLength > 0 &&
-            decompressed.lengthInBytes != header.originalLength) {
-          throw const FormatException('Decompressed length mismatch.');
-        }
-        return decompressed;
-      }
-      return plain;
-    } catch (_) {
-      if (key.isEmpty) {
-        throw StateError('Native decrypt failed and no Dart key available.');
-      }
-      return ShieldCrypto.decrypt(encrypted, key);
+    return ShieldFfi.load(libraryPath: config.nativeLibraryPath).decrypt(
+      encrypted,
+      key,
+      cryptoWorkers: config.cryptoWorkers,
+      zstdWorkers: config.zstdWorkers,
+    );
+  }
+  throw StateError('Dart crypto has been removed; useNative must be true.');
+}
+
+int _normalizeWorkers(int value) {
+  if (value < 0) {
+    return Platform.numberOfProcessors;
+  }
+  if (value == 0) return 1;
+  return value < 1 ? 1 : value;
+}
+
+void _tryInitDesktopAssetsBasePath(ShieldConfig config) {
+  // iOS/Android are initialized via platform plugins.
+  if (!(Platform.isLinux || Platform.isWindows || Platform.isMacOS)) return;
+
+  // Windows/Linux embed flutter_assets under <exe_dir>/data/flutter_assets.
+  if (Platform.isWindows || Platform.isLinux) {
+    final exeDir = p.dirname(Platform.resolvedExecutable);
+    final base = p.join(exeDir, 'data', 'flutter_assets');
+    if (Directory(base).existsSync()) {
+      ShieldFfi.load(libraryPath: config.nativeLibraryPath).setAssetsBasePath(base);
     }
   }
-  return ShieldCrypto.decrypt(encrypted, key);
 }

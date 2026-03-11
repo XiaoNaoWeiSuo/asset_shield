@@ -1,4 +1,4 @@
-#import <Foundation/Foundation.h>
+#import <Flutter/Flutter.h>
 
-@interface AssetShieldPlugin : NSObject
+@interface AssetShieldPlugin : NSObject<FlutterPlugin>
 @end

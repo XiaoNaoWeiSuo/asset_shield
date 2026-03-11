@@ -1,8 +1,11 @@
 raw_assets_dir: assets/raw_assets
 encrypted_assets_dir: assets/encrypted
-map_output: lib/generated/asset_shield_map.dart
 compression: zstd
 compression_level: 3
+chunk_size: 262144
+crypto_workers: -1
+zstd_workers: -1
+config_output: lib/generated/asset_shield_config.dart
 extensions:
   - .png
   - .json

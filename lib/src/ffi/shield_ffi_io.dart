@@ -5,11 +5,71 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 
+typedef _NativeEncrypt = Int32 Function(
+  Pointer<Uint8> data,
+  Int32 length,
+  Pointer<Uint8> key,
+  Int32 keyLength,
+  Int32 compressionAlgo,
+  Int32 compressionLevel,
+  Int32 chunkSize,
+  Pointer<Uint8> baseIv,
+  Int32 baseIvLength,
+  Int32 cryptoWorkers,
+  Int32 zstdWorkers,
+  Pointer<Pointer<Uint8>> outData,
+  Pointer<Int32> outLength,
+);
+
+typedef _DartEncrypt = int Function(
+  Pointer<Uint8> data,
+  int length,
+  Pointer<Uint8> key,
+  int keyLength,
+  int compressionAlgo,
+  int compressionLevel,
+  int chunkSize,
+  Pointer<Uint8> baseIv,
+  int baseIvLength,
+  int cryptoWorkers,
+  int zstdWorkers,
+  Pointer<Pointer<Uint8>> outData,
+  Pointer<Int32> outLength,
+);
+
+typedef _NativeEncryptFile = Int32 Function(
+  Pointer<Utf8> inputPath,
+  Pointer<Utf8> outputPath,
+  Pointer<Uint8> key,
+  Int32 keyLength,
+  Int32 compressionAlgo,
+  Int32 compressionLevel,
+  Int32 chunkSize,
+  Pointer<Uint8> baseIv,
+  Int32 baseIvLength,
+  Int32 zstdWorkers,
+);
+
+typedef _DartEncryptFile = int Function(
+  Pointer<Utf8> inputPath,
+  Pointer<Utf8> outputPath,
+  Pointer<Uint8> key,
+  int keyLength,
+  int compressionAlgo,
+  int compressionLevel,
+  int chunkSize,
+  Pointer<Uint8> baseIv,
+  int baseIvLength,
+  int zstdWorkers,
+);
+
 typedef _NativeDecrypt = Int32 Function(
   Pointer<Uint8> data,
   Int32 length,
   Pointer<Uint8> key,
   Int32 keyLength,
+  Int32 cryptoWorkers,
+  Int32 zstdWorkers,
   Pointer<Pointer<Uint8>> outData,
   Pointer<Int32> outLength,
 );
@@ -19,6 +79,31 @@ typedef _DartDecrypt = int Function(
   int length,
   Pointer<Uint8> key,
   int keyLength,
+  int cryptoWorkers,
+  int zstdWorkers,
+  Pointer<Pointer<Uint8>> outData,
+  Pointer<Int32> outLength,
+);
+
+typedef _NativeSetAssetsBasePath = Int32 Function(Pointer<Utf8> path);
+typedef _DartSetAssetsBasePath = int Function(Pointer<Utf8> path);
+
+typedef _NativeDecryptAsset = Int32 Function(
+  Pointer<Utf8> relPath,
+  Pointer<Uint8> key,
+  Int32 keyLength,
+  Int32 cryptoWorkers,
+  Int32 zstdWorkers,
+  Pointer<Pointer<Uint8>> outData,
+  Pointer<Int32> outLength,
+);
+
+typedef _DartDecryptAsset = int Function(
+  Pointer<Utf8> relPath,
+  Pointer<Uint8> key,
+  int keyLength,
+  int cryptoWorkers,
+  int zstdWorkers,
   Pointer<Pointer<Uint8>> outData,
   Pointer<Int32> outLength,
 );
@@ -65,8 +150,21 @@ typedef _DartDecompress = int Function(
 /// FFI bridge to native crypto and compression.
 class ShieldFfi {
   ShieldFfi._(DynamicLibrary library)
-      : _decrypt = library.lookupFunction<_NativeDecrypt, _DartDecrypt>(
+      : _encrypt = library.lookupFunction<_NativeEncrypt, _DartEncrypt>(
+          'asset_shield_encrypt',
+        ),
+        _encryptFile = library.lookupFunction<_NativeEncryptFile, _DartEncryptFile>(
+          'asset_shield_encrypt_file',
+        ),
+        _decrypt = library.lookupFunction<_NativeDecrypt, _DartDecrypt>(
           'asset_shield_decrypt',
+        ),
+        _setAssetsBasePath =
+            library.lookupFunction<_NativeSetAssetsBasePath, _DartSetAssetsBasePath>(
+          'asset_shield_set_assets_base_path',
+        ),
+        _decryptAsset = library.lookupFunction<_NativeDecryptAsset, _DartDecryptAsset>(
+          'asset_shield_load_and_decrypt_asset',
         ),
         _free = library.lookupFunction<_NativeFree, _DartFree>(
           'asset_shield_free',
@@ -84,7 +182,11 @@ class ShieldFfi {
           'asset_shield_clear_key',
         );
 
+  final _DartEncrypt _encrypt;
+  final _DartEncryptFile _encryptFile;
   final _DartDecrypt _decrypt;
+  final _DartSetAssetsBasePath _setAssetsBasePath;
+  final _DartDecryptAsset _decryptAsset;
   final _DartFree _free;
   final _DartCompress _compress;
   final _DartDecompress _decompress;
@@ -92,6 +194,10 @@ class ShieldFfi {
   final _DartClearKey _clearKey;
 
   static ShieldFfi? _cached;
+  static final Expando<Pointer<Uint8>> _nativePtr =
+      Expando<Pointer<Uint8>>('asset_shield_native_ptr');
+  static final Finalizer<Pointer<Uint8>> _finalizer =
+      Finalizer<Pointer<Uint8>>(_freeNative);
 
   static ShieldFfi load({String? libraryPath}) {
     final envPath = Platform.environment['ASSET_SHIELD_NATIVE_LIB'];
@@ -111,14 +217,206 @@ class ShieldFfi {
     return instance;
   }
 
-  Uint8List decrypt(Uint8List encrypted, Uint8List key) {
-    final dataPtr = malloc<Uint8>(encrypted.length);
+  static void _freeNative(Pointer<Uint8> ptr) {
+    try {
+      ShieldFfi.load()._free(ptr);
+    } catch (_) {
+      // Ignore dispose errors from finalizers.
+    }
+  }
+
+  static Uint8List _wrapNativeBuffer(Pointer<Uint8> ptr, int length) {
+    if (length == 0) {
+      if (ptr.address != 0) {
+        _freeNative(ptr);
+      }
+      return Uint8List(0);
+    }
+    if (ptr.address == 0) {
+      return Uint8List(0);
+    }
+    final list = ptr.asTypedList(length);
+    final buffer = list.buffer;
+    _nativePtr[buffer] = ptr;
+    _finalizer.attach(buffer, ptr, detach: buffer);
+    return list;
+  }
+
+  void release(Uint8List bytes) {
+    final ptr = _nativePtr[bytes.buffer];
+    if (ptr == null) return;
+    _nativePtr[bytes.buffer] = null;
+    _finalizer.detach(bytes.buffer);
+    _free(ptr);
+  }
+
+  Uint8List encrypt(
+    Uint8List plain,
+    Uint8List key, {
+    required int compressionAlgo,
+    required int compressionLevel,
+    required int chunkSize,
+    required Uint8List baseIv,
+    required int cryptoWorkers,
+    required int zstdWorkers,
+  }) {
+    final dataPtr = malloc<Uint8>(plain.length);
     final keyPtr = malloc<Uint8>(key.length);
+    final ivPtr = malloc<Uint8>(baseIv.length);
     final outPtr = malloc<Pointer<Uint8>>();
     final outLen = malloc<Int32>();
 
     try {
-      dataPtr.asTypedList(encrypted.length).setAll(0, encrypted);
+      if (plain.isNotEmpty) {
+        dataPtr.asTypedList(plain.length).setAll(0, plain);
+      }
+      if (key.isNotEmpty) {
+        keyPtr.asTypedList(key.length).setAll(0, key);
+      }
+      if (baseIv.isNotEmpty) {
+        ivPtr.asTypedList(baseIv.length).setAll(0, baseIv);
+      }
+
+      final result = _encrypt(
+        dataPtr,
+        plain.length,
+        keyPtr,
+        key.length,
+        compressionAlgo,
+        compressionLevel,
+        chunkSize,
+        ivPtr,
+        baseIv.length,
+        cryptoWorkers,
+        zstdWorkers,
+        outPtr,
+        outLen,
+      );
+
+      if (result != 0) {
+        throw StateError('Native encrypt failed: $result');
+      }
+
+      final length = outLen.value;
+      return _wrapNativeBuffer(outPtr.value, length);
+    } finally {
+      malloc.free(dataPtr);
+      malloc.free(keyPtr);
+      malloc.free(ivPtr);
+      malloc.free(outPtr);
+      malloc.free(outLen);
+    }
+  }
+
+  void encryptFile(
+    String inputPath,
+    String outputPath,
+    Uint8List key, {
+    required int compressionAlgo,
+    required int compressionLevel,
+    required int chunkSize,
+    required Uint8List baseIv,
+    required int zstdWorkers,
+  }) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    final keyPtr = malloc<Uint8>(key.length);
+    final ivPtr = malloc<Uint8>(baseIv.length);
+    try {
+      if (key.isNotEmpty) {
+        keyPtr.asTypedList(key.length).setAll(0, key);
+      }
+      if (baseIv.isNotEmpty) {
+        ivPtr.asTypedList(baseIv.length).setAll(0, baseIv);
+      }
+      final result = _encryptFile(
+        inPtr,
+        outPtr,
+        keyPtr,
+        key.length,
+        compressionAlgo,
+        compressionLevel,
+        chunkSize,
+        ivPtr,
+        baseIv.length,
+        zstdWorkers,
+      );
+      if (result != 0) {
+        throw StateError('Native encryptFile failed: $result');
+      }
+    } finally {
+      malloc.free(inPtr);
+      malloc.free(outPtr);
+      malloc.free(keyPtr);
+      malloc.free(ivPtr);
+    }
+  }
+
+  void setAssetsBasePath(String path) {
+    final ptr = path.toNativeUtf8();
+    try {
+      final result = _setAssetsBasePath(ptr);
+      if (result != 0) {
+        throw StateError('Native setAssetsBasePath failed: $result');
+      }
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  Uint8List decryptAsset(
+    String relPath,
+    Uint8List key, {
+    required int cryptoWorkers,
+    required int zstdWorkers,
+  }) {
+    final pathPtr = relPath.toNativeUtf8();
+    final keyAlloc = key.isEmpty ? 1 : key.length;
+    final keyPtr = malloc<Uint8>(keyAlloc);
+    final outPtr = malloc<Pointer<Uint8>>();
+    final outLen = malloc<Int32>();
+    try {
+      if (key.isNotEmpty) {
+        keyPtr.asTypedList(key.length).setAll(0, key);
+      }
+      final result = _decryptAsset(
+        pathPtr,
+        keyPtr,
+        key.length,
+        cryptoWorkers,
+        zstdWorkers,
+        outPtr,
+        outLen,
+      );
+      if (result != 0) {
+        throw StateError('Native decryptAsset failed: $result');
+      }
+      final length = outLen.value;
+      return _wrapNativeBuffer(outPtr.value, length);
+    } finally {
+      malloc.free(pathPtr);
+      malloc.free(keyPtr);
+      malloc.free(outPtr);
+      malloc.free(outLen);
+    }
+  }
+
+  Uint8List decrypt(
+    Uint8List encrypted,
+    Uint8List key, {
+    required int cryptoWorkers,
+    required int zstdWorkers,
+  }) {
+    final dataPtr = malloc<Uint8>(encrypted.length);
+    final keyAlloc = key.isEmpty ? 1 : key.length;
+    final keyPtr = malloc<Uint8>(keyAlloc);
+    final outPtr = malloc<Pointer<Uint8>>();
+    final outLen = malloc<Int32>();
+
+    try {
+      if (encrypted.isNotEmpty) {
+        dataPtr.asTypedList(encrypted.length).setAll(0, encrypted);
+      }
       if (key.isNotEmpty) {
         keyPtr.asTypedList(key.length).setAll(0, key);
       }
@@ -128,6 +426,8 @@ class ShieldFfi {
         encrypted.length,
         keyPtr,
         key.length,
+        cryptoWorkers,
+        zstdWorkers,
         outPtr,
         outLen,
       );
@@ -137,9 +437,7 @@ class ShieldFfi {
       }
 
       final length = outLen.value;
-      final output = Uint8List.fromList(outPtr.value.asTypedList(length));
-      _free(outPtr.value);
-      return output;
+      return _wrapNativeBuffer(outPtr.value, length);
     } finally {
       malloc.free(dataPtr);
       malloc.free(keyPtr);
@@ -185,9 +483,7 @@ class ShieldFfi {
       if (length == 0) {
         return Uint8List(0);
       }
-      final output = Uint8List.fromList(outPtr.value.asTypedList(length));
-      _free(outPtr.value);
-      return output;
+      return _wrapNativeBuffer(outPtr.value, length);
     } finally {
       malloc.free(dataPtr);
       malloc.free(outPtr);
@@ -215,9 +511,7 @@ class ShieldFfi {
       if (length == 0) {
         return Uint8List(0);
       }
-      final output = Uint8List.fromList(outPtr.value.asTypedList(length));
-      _free(outPtr.value);
-      return output;
+      return _wrapNativeBuffer(outPtr.value, length);
     } finally {
       malloc.free(dataPtr);
       malloc.free(outPtr);

@@ -12,5 +12,6 @@ Pod::Spec.new do |s|
   s.vendored_libraries = 'Frameworks/libasset_shield_crypto.dylib'
   s.source_files = 'Classes/**/*'
   s.public_header_files = 'Classes/**/*.h'
+  s.dependency 'FlutterMacOS'
   s.requires_arc = false
 end

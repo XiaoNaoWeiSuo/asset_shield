@@ -1,6 +1,13 @@
+## 0.0.4
+
+- Remove asset map usage; hashed filenames only
+- Generate runtime config file (no plaintext path map)
+
 ## 0.0.3
 
 - Add Swift Package Manager (SPM) support for iOS/macOS
+- Add ShieldAssetBundle for seamless DefaultAssetBundle injection
+- Add hash-based asset path strategy (no plaintext map)
 
 ## 0.0.2
 

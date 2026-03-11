@@ -22,16 +22,23 @@ $sources = @(
 )
 $sources += Get-ChildItem -Path (Join-Path $ZstdDir "common"), (Join-Path $ZstdDir "compress"), (Join-Path $ZstdDir "decompress") -Filter *.c -Recurse | ForEach-Object { $_.FullName }
 
+$DisableAsm = $true
+if ($env:ASSET_SHIELD_ZSTD_DISABLE_ASM) {
+  $DisableAsm = $env:ASSET_SHIELD_ZSTD_DISABLE_ASM -ne "0"
+}
+$AsmDefine = $DisableAsm ? "-DZSTD_DISABLE_ASM=1" : ""
+
 $clang = Get-Command clang -ErrorAction SilentlyContinue
 if ($clang) {
-  & clang -std=c99 -O2 -shared -DZSTD_DISABLE_ASM=1 -I "$ZstdDir" -o "$OutDir\asset_shield_crypto.dll" $sources
+  & clang -std=c99 -O2 -shared $AsmDefine -DZSTD_MULTITHREAD=1 -I "$ZstdDir" -o "$OutDir\asset_shield_crypto.dll" $sources
   Write-Output "Built $OutDir\asset_shield_crypto.dll"
   exit 0
 }
 
 $cl = Get-Command cl -ErrorAction SilentlyContinue
 if ($cl) {
-  & cl /nologo /O2 /LD /D ZSTD_DISABLE_ASM=1 /I"$ZstdDir" /Fe:"$OutDir\asset_shield_crypto.dll" $sources
+  $asmCl = $DisableAsm ? "/D ZSTD_DISABLE_ASM=1" : ""
+  & cl /nologo /O2 /LD $asmCl /D ZSTD_MULTITHREAD=1 /I"$ZstdDir" /Fe:"$OutDir\asset_shield_crypto.dll" $sources
   Write-Output "Built $OutDir\asset_shield_crypto.dll"
   exit 0
 }
@@ -43,7 +50,8 @@ if ($cl) {
      $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
      if (Test-Path $vcvars) {
        $srcArgs = ($sources | ForEach-Object { '"{0}"' -f $_ }) -join ' '
-       $cmd = "call `"$vcvars`" && cl /nologo /O2 /LD /D ZSTD_DISABLE_ASM=1 /I`"$ZstdDir`" /Fe:`"$OutDir\asset_shield_crypto.dll`" $srcArgs"
+       $asm = $DisableAsm ? "/D ZSTD_DISABLE_ASM=1" : ""
+       $cmd = "call `"$vcvars`" && cl /nologo /O2 /LD $asm /D ZSTD_MULTITHREAD=1 /I`"$ZstdDir`" /Fe:`"$OutDir\asset_shield_crypto.dll`" $srcArgs"
        cmd /c $cmd
        if ($LASTEXITCODE -eq 0) {
          Write-Output "Built $OutDir\asset_shield_crypto.dll"

@@ -12,5 +12,6 @@ Pod::Spec.new do |s|
   s.vendored_frameworks = 'Frameworks/AssetShieldCrypto.xcframework'
   s.source_files = 'Classes/**/*'
   s.public_header_files = 'Classes/**/*.h'
+  s.dependency 'Flutter'
   s.requires_arc = false
 end

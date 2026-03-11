@@ -6,22 +6,28 @@ class ShieldCliConfig {
   ShieldCliConfig({
     required this.rawAssetsDir,
     required this.encryptedAssetsDir,
-    required this.mapOutput,
     required this.extensions,
     required this.keyBase64,
     required this.emitKey,
     required this.compression,
     required this.compressionLevel,
+    required this.chunkSize,
+    required this.cryptoWorkers,
+    required this.zstdWorkers,
+    required this.configOutput,
   });
 
   final String rawAssetsDir;
   final String encryptedAssetsDir;
-  final String mapOutput;
   final List<String> extensions;
   final String keyBase64;
   final bool emitKey;
   final String compression;
   final int compressionLevel;
+  final int chunkSize;
+  final int cryptoWorkers;
+  final int zstdWorkers;
+  final String configOutput;
 
   static Future<ShieldCliConfig> load(String path) async {
     final file = File(path);
@@ -80,12 +86,18 @@ class ShieldCliConfig {
     return ShieldCliConfig(
       rawAssetsDir: readString('raw_assets_dir', fallback: 'assets'),
       encryptedAssetsDir: readString('encrypted_assets_dir', fallback: 'assets/encrypted'),
-      mapOutput: readString('map_output', fallback: 'lib/generated/asset_shield_map.dart'),
       extensions: readExtensions('extensions'),
       keyBase64: readString('key'),
       emitKey: readBool('emit_key', fallback: false),
       compression: readString('compression', fallback: 'zstd').toLowerCase(),
       compressionLevel: _readInt(yaml, 'compression_level', fallback: 3),
+      chunkSize: _readInt(yaml, 'chunk_size', fallback: 256 * 1024),
+      cryptoWorkers: _readInt(yaml, 'crypto_workers', fallback: -1),
+      zstdWorkers: _readInt(yaml, 'zstd_workers', fallback: -1),
+      configOutput: readString(
+        'config_output',
+        fallback: 'lib/generated/asset_shield_config.dart',
+      ),
     );
   }
 }

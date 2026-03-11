@@ -16,8 +16,13 @@ if [[ -n "${ASSET_SHIELD_KEY_BASE64:-}" ]]; then
 fi
 
 cc="${CC:-gcc}"
-"${cc}" -std=c99 -O2 -fPIC -fvisibility=hidden -shared \
-  -DZSTD_DISABLE_ASM=1 \
+asm_define=""
+if [[ "${ASSET_SHIELD_ZSTD_DISABLE_ASM:-}" == "1" ]]; then
+  asm_define="-DZSTD_DISABLE_ASM=1"
+fi
+"${cc}" -std=c99 -O2 -fPIC -fvisibility=hidden -shared -pthread \
+  -DZSTD_MULTITHREAD=1 \
+  ${asm_define} \
   -I "${ZSTD_DIR}" \
   -o "${OUT_DIR}/libasset_shield_crypto.so" \
   "${ROOT_DIR}/native/asset_shield_crypto.c" \

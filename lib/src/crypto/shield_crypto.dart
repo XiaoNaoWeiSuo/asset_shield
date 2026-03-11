@@ -1,22 +1,16 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:pointycastle/api.dart'
-    show AEADParameters, InvalidCipherTextException, KeyParameter;
-import 'package:pointycastle/block/aes.dart';
-import 'package:pointycastle/block/modes/gcm.dart';
+import '../ffi/shield_ffi.dart';
 
-import 'shield_compression.dart';
-
-/// AES‑256‑GCM encryption/decryption with optional compression header.
+/// Native AES‑256‑GCM encryption/decryption with V3 chunked header.
 class ShieldCrypto {
   static const List<int> _magic = <int>[0x41, 0x53, 0x53, 0x54];
-  static const int _version1 = 1;
-  static const int _version2 = 2;
+  static const int _version4 = 4;
   static const int _algoNone = 0;
   static const int _algoZstd = 1;
   static const int _ivLength = 12;
-  static const int _tagLengthBytes = 16;
 
   /// Encrypts bytes with AES‑256‑GCM and optional compression.
   static Uint8List encrypt(
@@ -24,202 +18,115 @@ class ShieldCrypto {
     Uint8List keyBytes, {
     bool compress = true,
     int compressionLevel = 3,
+    int chunkSize = 256 * 1024,
+    int cryptoWorkers = -1,
+    int zstdWorkers = -1,
   }) {
-    _validateKeyLength(keyBytes);
-    final originalLength = plainBytes.lengthInBytes;
-    var payload = plainBytes;
-    var compressed = false;
-    if (compress && originalLength > 0) {
-      final compressedBytes =
-          ShieldCompression.compress(plainBytes, level: compressionLevel);
-      if (compressedBytes.lengthInBytes < originalLength) {
-        payload = compressedBytes;
-        compressed = true;
-      }
+    _validateKeyLength(keyBytes, allowEmpty: false);
+    if (chunkSize <= 0) {
+      throw ArgumentError('chunkSize must be positive.');
     }
 
-    final iv = _randomBytes(_ivLength);
-    final cipher = _initCipher(true, keyBytes, iv);
-    final encrypted = cipher.process(payload);
+    final algo = compress ? _algoZstd : _algoNone;
+    final baseIv = _randomBytes(_ivLength);
+    for (var i = 8; i < _ivLength; i++) {
+      baseIv[i] = 0;
+    }
 
-    final output = BytesBuilder(copy: false);
-    output.add(_magic);
-    output.add(<int>[
-      _version2,
-      compressed ? 0x01 : 0x00,
-      compressed ? _algoZstd : _algoNone,
-      _ivLength,
-    ]);
-    output.add(_uint32le(originalLength));
-    output.add(iv);
-    output.add(encrypted);
-    return output.toBytes();
+    final workers = _normalizeWorkers(cryptoWorkers);
+    final zstd = _normalizeWorkers(zstdWorkers);
+
+    return ShieldFfi.load().encrypt(
+      plainBytes,
+      keyBytes,
+      compressionAlgo: algo,
+      compressionLevel: compressionLevel,
+      chunkSize: chunkSize,
+      baseIv: baseIv,
+      cryptoWorkers: workers,
+      zstdWorkers: zstd,
+    );
   }
 
   /// Decrypts bytes produced by [encrypt].
-  static Uint8List decrypt(Uint8List encryptedBytes, Uint8List keyBytes) {
-    _validateKeyLength(keyBytes);
-    final header = _parseHeader(encryptedBytes);
-    if (header.version == _version1) {
-      return _decryptV1(encryptedBytes, keyBytes);
-    }
-
-    if (header.compressed && header.algorithm != _algoZstd) {
-      throw const FormatException('Unsupported compression algorithm.');
-    }
-
-    final cipher = _initCipher(false, keyBytes, header.iv);
-    try {
-      final plain = cipher.process(header.cipherText);
-      if (header.compressed) {
-        final decompressed = ShieldCompression.decompress(
-          plain,
-          originalLength: header.originalLength,
-        );
-        if (header.originalLength > 0 &&
-            decompressed.lengthInBytes != header.originalLength) {
-          throw const FormatException('Decompressed length mismatch.');
-        }
-        return decompressed;
-      }
-      return plain;
-    } on InvalidCipherTextException catch (error) {
-      throw StateError('Failed to decrypt asset: ${error.message}');
-    }
+  static Uint8List decrypt(
+    Uint8List encryptedBytes,
+    Uint8List keyBytes, {
+    int cryptoWorkers = -1,
+    int zstdWorkers = -1,
+  }) {
+    _validateKeyLength(keyBytes, allowEmpty: true);
+    final workers = _normalizeWorkers(cryptoWorkers);
+    final zstd = _normalizeWorkers(zstdWorkers);
+    return ShieldFfi.load().decrypt(
+      encryptedBytes,
+      keyBytes,
+      cryptoWorkers: workers,
+      zstdWorkers: zstd,
+    );
   }
 
-  /// Parses the encrypted asset header (for compression metadata).
+  /// Parses the encrypted asset header (V3 only).
   static ShieldHeader parseHeader(Uint8List encryptedBytes) {
-    return _parseHeader(encryptedBytes);
-  }
-
-  static Uint8List _decryptV1(Uint8List encryptedBytes, Uint8List keyBytes) {
-    if (encryptedBytes.lengthInBytes < _magic.length + 2 + _ivLength + 1) {
+    if (encryptedBytes.lengthInBytes < 28) {
       throw const FormatException('Encrypted asset is too short.');
     }
-
     for (var i = 0; i < _magic.length; i++) {
       if (encryptedBytes[i] != _magic[i]) {
         throw const FormatException('Invalid asset header.');
       }
     }
 
-    final version = encryptedBytes[_magic.length];
-    if (version != _version1) {
+    final version = encryptedBytes[4];
+    if (version != _version4) {
       throw FormatException('Unsupported asset version: $version.');
     }
 
-    final ivLength = encryptedBytes[_magic.length + 1];
-    if (ivLength <= 0 || encryptedBytes.lengthInBytes < _magic.length + 2 + ivLength + 1) {
+    final flags = encryptedBytes[5];
+    final algo = encryptedBytes[6];
+    final ivLength = encryptedBytes[7];
+    if (ivLength != _ivLength) {
       throw const FormatException('Invalid IV length.');
     }
 
-    final ivStart = _magic.length + 2;
-    final ivEnd = ivStart + ivLength;
-    final iv = Uint8List.sublistView(encryptedBytes, ivStart, ivEnd);
-    final cipherText = Uint8List.sublistView(encryptedBytes, ivEnd);
+    final chunkSize = _readUint32Le(encryptedBytes, 8);
+    final originalLength = _readUint32Le(encryptedBytes, 12);
+    final iv = Uint8List.sublistView(encryptedBytes, 16, 16 + _ivLength);
 
-    final cipher = _initCipher(false, keyBytes, iv);
-    try {
-      return cipher.process(cipherText);
-    } on InvalidCipherTextException catch (error) {
-      throw StateError('Failed to decrypt asset: ${error.message}');
-    }
-  }
-
-  static void _validateKeyLength(Uint8List keyBytes) {
-    final length = keyBytes.lengthInBytes;
-    if (length != 32) {
-      throw ArgumentError(
-        'Key length must be 32 bytes for AES-256-GCM.',
-      );
-    }
-  }
-
-  static GCMBlockCipher _initCipher(bool forEncryption, Uint8List key, Uint8List iv) {
-    final cipher = GCMBlockCipher(AESEngine());
-    final params = AEADParameters(
-      KeyParameter(key),
-      _tagLengthBytes * 8,
-      iv,
-      Uint8List(0),
+    return ShieldHeader(
+      version: version,
+      compressed: (flags & 0x01) != 0,
+      algorithm: algo,
+      chunkSize: chunkSize,
+      originalLength: originalLength,
+      baseIv: iv,
     );
-    cipher.init(forEncryption, params);
-    return cipher;
+  }
+
+  static void _validateKeyLength(Uint8List keyBytes, {required bool allowEmpty}) {
+    final length = keyBytes.lengthInBytes;
+    if (allowEmpty && length == 0) {
+      return;
+    }
+    if (length != 32) {
+      throw ArgumentError('Key length must be 32 bytes for AES-256-GCM.');
+    }
+  }
+
+  static int _normalizeWorkers(int value) {
+    if (value < 0) {
+      return Platform.numberOfProcessors;
+    }
+    if (value == 0) {
+      return 1;
+    }
+    return value < 1 ? 1 : value;
   }
 
   static Uint8List _randomBytes(int length) {
     final random = Random.secure();
     final bytes = List<int>.generate(length, (_) => random.nextInt(256));
     return Uint8List.fromList(bytes);
-  }
-
-  static ShieldHeader _parseHeader(Uint8List encryptedBytes) {
-    if (encryptedBytes.lengthInBytes < _magic.length + 2 + _ivLength + 1) {
-      throw const FormatException('Encrypted asset is too short.');
-    }
-    for (var i = 0; i < _magic.length; i++) {
-      if (encryptedBytes[i] != _magic[i]) {
-        throw const FormatException('Invalid asset header.');
-      }
-    }
-
-    final version = encryptedBytes[_magic.length];
-    if (version == _version1) {
-      final ivLength = encryptedBytes[_magic.length + 1];
-      final ivStart = _magic.length + 2;
-      final ivEnd = ivStart + ivLength;
-      final iv = Uint8List.sublistView(encryptedBytes, ivStart, ivEnd);
-      final cipherText = Uint8List.sublistView(encryptedBytes, ivEnd);
-      return ShieldHeader(
-        version: version,
-        compressed: false,
-        algorithm: _algoNone,
-        originalLength: cipherText.length,
-        iv: iv,
-        cipherText: cipherText,
-      );
-    }
-
-    if (version != _version2) {
-      throw FormatException('Unsupported asset version: $version.');
-    }
-
-    if (encryptedBytes.lengthInBytes < _magic.length + 8 + _ivLength + 1) {
-      throw const FormatException('Encrypted asset is too short.');
-    }
-
-    final flags = encryptedBytes[_magic.length + 1];
-    final algo = encryptedBytes[_magic.length + 2];
-    final ivLength = encryptedBytes[_magic.length + 3];
-    final originalLength = _readUint32Le(encryptedBytes, _magic.length + 4);
-
-    final ivStart = _magic.length + 8;
-    final ivEnd = ivStart + ivLength;
-    if (ivLength <= 0 || encryptedBytes.lengthInBytes < ivEnd + 1) {
-      throw const FormatException('Invalid IV length.');
-    }
-
-    final iv = Uint8List.sublistView(encryptedBytes, ivStart, ivEnd);
-    final cipherText = Uint8List.sublistView(encryptedBytes, ivEnd);
-
-    return ShieldHeader(
-      version: version,
-      compressed: (flags & 0x01) != 0,
-      algorithm: algo,
-      originalLength: originalLength,
-      iv: iv,
-      cipherText: cipherText,
-    );
-  }
-
-  static Uint8List _uint32le(int value) {
-    return Uint8List.fromList(<int>[
-      value & 0xff,
-      (value >> 8) & 0xff,
-      (value >> 16) & 0xff,
-      (value >> 24) & 0xff,
-    ]);
   }
 
   static int _readUint32Le(Uint8List data, int offset) {
@@ -236,15 +143,15 @@ class ShieldHeader {
     required this.version,
     required this.compressed,
     required this.algorithm,
+    required this.chunkSize,
     required this.originalLength,
-    required this.iv,
-    required this.cipherText,
+    required this.baseIv,
   });
 
   final int version;
   final bool compressed;
   final int algorithm;
+  final int chunkSize;
   final int originalLength;
-  final Uint8List iv;
-  final Uint8List cipherText;
+  final Uint8List baseIv;
 }

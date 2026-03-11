@@ -6,10 +6,13 @@ BUILD_DIR="${ROOT_DIR}/build/ios"
 FRAMEWORK_DIR="${ROOT_DIR}/ios/Frameworks"
 ZSTD_DIR="${ROOT_DIR}/third_party/zstd/lib"
 IOS_MIN_VERSION="${IOS_MIN_VERSION:-12.0}"
+HEADERS_DIR="${BUILD_DIR}/headers"
 
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}" "${FRAMEWORK_DIR}"
 rm -rf "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
+mkdir -p "${HEADERS_DIR}"
+cp -f "${ROOT_DIR}/native/asset_shield_crypto.h" "${HEADERS_DIR}/asset_shield_crypto.h"
 
 if [[ -n "${ASSET_SHIELD_KEY_BASE64:-}" ]]; then
   if ! command -v dart >/dev/null 2>&1; then
@@ -48,8 +51,8 @@ build_lib() {
   for src in "${sources[@]}"; do
     local rel="${src#${ROOT_DIR}/}"
     local obj="${out_dir}/$(echo "${rel}" | tr '/.' '__').o"
-    "${cc}" -std=c99 -O2 -fvisibility=hidden -fPIC \
-      -DZSTD_DISABLE_ASM=1 \
+    "${cc}" -std=c99 -O2 -fvisibility=hidden -fPIC -pthread \
+      -DZSTD_MULTITHREAD=1 \
       -I "${ZSTD_DIR}" \
       -isysroot "$(xcrun --sdk "${sdk}" --show-sdk-path)" \
       ${min_flag} \
@@ -71,8 +74,8 @@ lipo -create \
   -output "${IOS_SIM}/libasset_shield_crypto.a"
 
 xcodebuild -create-xcframework \
-  -library "${IOS_DEVICE}/libasset_shield_crypto.a" -headers "${ROOT_DIR}/native" \
-  -library "${IOS_SIM}/libasset_shield_crypto.a" -headers "${ROOT_DIR}/native" \
+  -library "${IOS_DEVICE}/libasset_shield_crypto.a" -headers "${HEADERS_DIR}" \
+  -library "${IOS_SIM}/libasset_shield_crypto.a" -headers "${HEADERS_DIR}" \
   -output "${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"
 
 echo "Built iOS xcframework at ${FRAMEWORK_DIR}/AssetShieldCrypto.xcframework"

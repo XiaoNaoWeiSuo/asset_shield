@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:asset_shield/crypto.dart';
+import 'package:asset_shield/src/crypto/shield_hash.dart';
 import 'package:asset_shield/src/config/shield_cli_config.dart';
+import 'package:asset_shield/src/ffi/shield_ffi.dart';
 
 Future<void> main(List<String> args) async {
   if (args.isEmpty) {
@@ -62,6 +65,11 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
   if (compression != 'zstd' && compression != 'none') {
     stderr.writeln('Unsupported compression "$compression", falling back to none.');
   }
+  if (config.chunkSize <= 0) {
+    stderr.writeln('Invalid chunk_size: ${config.chunkSize}');
+    exitCode = 64;
+    return;
+  }
 
   final rawDir = Directory(config.rawAssetsDir);
   if (!await rawDir.exists()) {
@@ -75,7 +83,6 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
     await encryptedDir.create(recursive: true);
   }
 
-  final assetMap = <String, String>{};
   final files = await rawDir.list(recursive: true).where((entity) {
     if (entity is! File) return false;
     if (config.extensions.isEmpty) return true;
@@ -86,13 +93,12 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
   for (final entity in files) {
     final file = entity as File;
     final relative = p.relative(file.path, from: rawDir.path);
-    final encryptedRelative = '$relative.dat';
-    final encryptedPath = p.join(encryptedDir.path, encryptedRelative);
-
     final originalAssetPath = _toPosix(p.join(config.rawAssetsDir, relative));
-    final encryptedAssetPath = _toPosix(p.join(config.encryptedAssetsDir, encryptedRelative));
-
-    assetMap[originalAssetPath] = encryptedAssetPath;
+    final encryptedRelative =
+        '${ShieldHash.sha256Hex(originalAssetPath)}.dat';
+    final encryptedPath = p.join(encryptedDir.path, encryptedRelative);
+    final encryptedAssetPath =
+        _toPosix(p.join(config.encryptedAssetsDir, encryptedRelative));
 
     if (verbose || dryRun) {
       stdout.writeln('${dryRun ? '[dry-run] ' : ''}$originalAssetPath -> $encryptedAssetPath');
@@ -102,24 +108,46 @@ Future<void> _runEncrypt(_EncryptOptions options) async {
       continue;
     }
 
-    final bytes = await file.readAsBytes();
-    final encrypted = ShieldCrypto.encrypt(
-      Uint8List.fromList(bytes),
-      keyBytes,
-      compress: compressEnabled && compression == 'zstd',
-      compressionLevel: config.compressionLevel,
-    );
-    final outFile = File(encryptedPath);
-    await outFile.parent.create(recursive: true);
-    await outFile.writeAsBytes(encrypted, flush: true);
+    // Prefer native file IO encryption to avoid reading and copying large files into Dart.
+    final useFileIo = !dryRun;
+    if (useFileIo) {
+      final baseIv = _randomBytes(12);
+      for (var i = 8; i < 12; i++) {
+        baseIv[i] = 0;
+      }
+      ShieldFfi.load().encryptFile(
+        file.path,
+        encryptedPath,
+        keyBytes,
+        compressionAlgo: compressEnabled && compression == 'zstd' ? 1 : 0,
+        compressionLevel: config.compressionLevel,
+        chunkSize: config.chunkSize,
+        baseIv: baseIv,
+        zstdWorkers: config.zstdWorkers,
+      );
+    } else {
+      final bytes = await file.readAsBytes();
+      final encrypted = ShieldCrypto.encrypt(
+        Uint8List.fromList(bytes),
+        keyBytes,
+        compress: compressEnabled && compression == 'zstd',
+        compressionLevel: config.compressionLevel,
+        chunkSize: config.chunkSize,
+        cryptoWorkers: config.cryptoWorkers,
+        zstdWorkers: config.zstdWorkers,
+      );
+      final outFile = File(encryptedPath);
+      await outFile.parent.create(recursive: true);
+      await outFile.writeAsBytes(encrypted, flush: true);
+    }
   }
 
   if (dryRun) {
     return;
   }
 
-  await _writeMapFile(config, assetMap);
-  stdout.writeln('Encrypted ${assetMap.length} assets.');
+  await _writeConfigFile(config);
+  stdout.writeln('Encrypted ${files.length} assets.');
 }
 
 void _runGenKey(int length) {
@@ -145,16 +173,43 @@ Future<void> _runInit(_InitOptions options) async {
       : 'REPLACE_WITH_BASE64_KEY';
 
   final buffer = StringBuffer()
+    ..writeln('# Raw assets directory (plain files)')
     ..writeln('raw_assets_dir: assets')
+    ..writeln('')
+    ..writeln('# Encrypted assets output directory')
     ..writeln('encrypted_assets_dir: assets/encrypted')
-    ..writeln('map_output: lib/generated/asset_shield_map.dart')
+    ..writeln('')
+    ..writeln('# Generated config output for runtime')
+    ..writeln('config_output: lib/generated/asset_shield_config.dart')
+    ..writeln('')
+    ..writeln('# Compression algorithm: zstd | none')
     ..writeln('compression: zstd')
+    ..writeln('')
+    ..writeln('# Compression level (Zstd) - higher is smaller but slower')
     ..writeln('compression_level: 3')
-    ..writeln('extensions:')
-    ..writeln('  - .png')
-    ..writeln('  - .json')
-    ..writeln('  - .mp3')
+    ..writeln('')
+    ..writeln('# Chunk size for crypto (bytes)')
+    ..writeln('chunk_size: 262144')
+    ..writeln('')
+    ..writeln('# Crypto workers (-1 = auto, 0/1 = single-thread)')
+    ..writeln('crypto_workers: -1')
+    ..writeln('')
+    ..writeln('# Zstd workers (-1 = auto, 0/1 = single-thread)')
+    ..writeln('zstd_workers: -1')
+    ..writeln('')
+    ..writeln('# Extensions to encrypt. Empty list means encrypt all files.')
+    ..writeln('extensions: []')
+    ..writeln('# Example:')
+    ..writeln('#   - .png')
+    ..writeln('#   - .jpeg')
+    ..writeln('#   - .jpg')
+    ..writeln('#   - .json')
+    ..writeln('#   - .mp3')
+    ..writeln('')
+    ..writeln('# Base64 key (32 bytes for AES-256-GCM)')
     ..writeln('key: "$keyBase64"')
+    ..writeln('')
+    ..writeln('# Emit key constant into generated config')
     ..writeln('emit_key: ${emitKey ? 'true' : 'false'}');
 
   await file.parent.create(recursive: true);
@@ -162,23 +217,13 @@ Future<void> _runInit(_InitOptions options) async {
   stdout.writeln('Wrote config: ${file.path}');
 }
 
-Future<void> _writeMapFile(
-  ShieldCliConfig config,
-  Map<String, String> assetMap,
-) async {
-  final mapFile = File(config.mapOutput);
-  await mapFile.parent.create(recursive: true);
+Future<void> _writeConfigFile(ShieldCliConfig config) async {
+  final configFile = File(config.configOutput);
+  await configFile.parent.create(recursive: true);
 
-  final sortedKeys = assetMap.keys.toList()..sort();
   final buffer = StringBuffer()
     ..writeln('// Generated by asset_shield. Do not edit by hand.')
-    ..writeln("const Map<String, String> assetShieldMap = <String, String>{");
-
-  for (final key in sortedKeys) {
-    final value = assetMap[key]!;
-    buffer.writeln("  '${_escape(key)}': '${_escape(value)}',");
-  }
-  buffer.writeln('};');
+    ..writeln("const String assetShieldEncryptedDir = '${_escape(config.encryptedAssetsDir)}';");
 
   if (config.emitKey) {
     buffer
@@ -186,8 +231,8 @@ Future<void> _writeMapFile(
       ..writeln("const String assetShieldKeyBase64 = '${_escape(config.keyBase64)}';");
   }
 
-  await mapFile.writeAsString(buffer.toString(), flush: true);
-  stdout.writeln('Wrote asset map: ${mapFile.path}');
+  await configFile.writeAsString(buffer.toString(), flush: true);
+  stdout.writeln('Wrote asset config: ${configFile.path}');
 }
 
 List<String> _normalizeArgs(List<String> args) {
@@ -209,6 +254,12 @@ List<String> _normalizeArgs(List<String> args) {
 
 String _escape(String input) {
   return input.replaceAll('\\', '\\\\').replaceAll("'", r"\'");
+}
+
+Uint8List _randomBytes(int length) {
+  final random = Random.secure();
+  final bytes = List<int>.generate(length, (_) => random.nextInt(256));
+  return Uint8List.fromList(bytes);
 }
 
 String _toPosix(String input) {
