@@ -1,7 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
 
-import 'package:ffi/ffi.dart';
 
 typedef _NativeSelftest = Int32 Function();
 typedef _DartSelftest = int Function();

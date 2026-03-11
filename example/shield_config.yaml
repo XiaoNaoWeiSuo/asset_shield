@@ -1,0 +1,38 @@
+# Raw assets directory (plain files)
+raw_assets_dir: assets/images
+
+# Encrypted assets output directory
+encrypted_assets_dir: assets/encrypted
+
+# Generated config output for runtime
+config_output: lib/generated/asset_shield_config.dart
+
+# Compression algorithm: zstd | none
+compression: zstd
+
+# Compression level (Zstd) - higher is smaller but slower
+compression_level: 3
+
+# Chunk size for crypto (bytes)
+chunk_size: 262144
+
+# Crypto workers (-1 = auto, 0/1 = single-thread)
+crypto_workers: -1
+
+# Zstd workers (-1 = auto, 0/1 = single-thread)
+zstd_workers: -1
+
+# Extensions to encrypt. Empty list means encrypt all files.
+extensions: []
+# Example:
+#   - .png
+#   - .jpeg
+#   - .jpg
+#   - .json
+#   - .mp3
+
+# Base64 key (32 bytes for AES-256-GCM)
+key: "tw/xfD6hC05uhCQ9vxMxvgBsg/4EGMwgbRf9BSH6AoE="
+
+# Emit key constant into generated config
+emit_key: true
