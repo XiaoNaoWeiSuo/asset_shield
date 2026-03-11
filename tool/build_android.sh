@@ -85,7 +85,8 @@ build_one() {
     -o "${out}" \
     "${ROOT_DIR}/native/asset_shield_crypto.c" \
     "${ROOT_DIR}/native/asset_shield_android_jni.c" \
-    $(find "${ZSTD_DIR}/common" "${ZSTD_DIR}/compress" "${ZSTD_DIR}/decompress" -name "*.c")
+    $(find "${ZSTD_DIR}/common" "${ZSTD_DIR}/compress" "${ZSTD_DIR}/decompress" -name "*.c") \
+    -landroid
 }
 
 build_one aarch64-linux-android21 "${OUT_DIR}/arm64-v8a/libasset_shield_crypto.so"

@@ -1,5 +1,5 @@
 # Raw assets directory (plain files)
-raw_assets_dir: assets/images
+raw_assets_dir: assets
 
 # Encrypted assets output directory
 encrypted_assets_dir: assets/encrypted
@@ -32,7 +32,7 @@ extensions: []
 #   - .mp3
 
 # Base64 key (32 bytes for AES-256-GCM)
-key: "tw/xfD6hC05uhCQ9vxMxvgBsg/4EGMwgbRf9BSH6AoE="
+key: "pTz364tq2bIUyimviOMkrqUpBlC60URhQON87+13tbc="
 
 # Emit key constant into generated config
 emit_key: true

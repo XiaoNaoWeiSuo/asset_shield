@@ -211,6 +211,18 @@ class ShieldFfi {
     if (cached != null) {
       return cached;
     }
+    if (Platform.isMacOS) {
+      // Prefer the in-process dylib so native asset base path set by the plugin
+      // is shared with FFI calls. Falling back to an external dylib can create
+      // a separate image with its own globals.
+      try {
+        final instance = ShieldFfi._(DynamicLibrary.process());
+        _cached = instance;
+        return instance;
+      } catch (_) {
+        // Fall back to resolving a bundled library.
+      }
+    }
     final library = _openDefaultLibrary();
     final instance = ShieldFfi._(library);
     _cached = instance;

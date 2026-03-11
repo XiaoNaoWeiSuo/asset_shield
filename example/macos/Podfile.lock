@@ -1,5 +1,6 @@
 PODS:
-  - asset_shield (0.0.1)
+  - asset_shield (0.0.1):
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
 
 DEPENDENCIES:
@@ -13,7 +14,7 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
 
 SPEC CHECKSUMS:
-  asset_shield: d37cf4f24bbb83d32f142f2927024b4a6c94edc3
+  asset_shield: 1912eb45c1e435842e5489344f4310eab8572b13
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
 
 PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
